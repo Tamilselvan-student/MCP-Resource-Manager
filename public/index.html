@@ -1,0 +1,495 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Resource Manager</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <!-- Retro Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=VT323&display=swap" rel="stylesheet">
+
+    <style>
+        /* ================= RESET ================= */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            image-rendering: pixelated;
+        }
+
+        body {
+            font-family: 'VT323', monospace;
+            background: #0b0b0b;
+            color: #d0d0d0;
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        /* ================= CONTAINER ================= */
+        .container {
+            width: 100%;
+            max-width: 920px;
+            height: 88vh;
+            background: #111;
+            border: 3px solid #2f2f2f;
+            box-shadow:
+                inset 0 0 0 2px #000,
+                0 0 0 4px #1c1c1c;
+            display: flex;
+            flex-direction: column;
+            animation: flicker 4s infinite;
+        }
+
+        @keyframes flicker {
+
+            0%,
+            100% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0.98;
+            }
+        }
+
+        /* ================= HEADER ================= */
+        .header {
+            padding: 20px;
+            border-bottom: 2px solid #2a2a2a;
+            position: relative;
+        }
+
+        .header::after {
+            content: "";
+            position: absolute;
+            inset: 0;
+            background: repeating-linear-gradient(to bottom,
+                    rgba(255, 255, 255, 0.03),
+                    rgba(255, 255, 255, 0.03) 1px,
+                    transparent 1px,
+                    transparent 3px);
+            pointer-events: none;
+        }
+
+        .header h1 {
+            font-family: 'Press Start 2P', monospace;
+            font-size: 18px;
+            margin-bottom: 6px;
+        }
+
+        .header p {
+            font-size: 14px;
+            opacity: 0.7;
+        }
+
+        /* ================= USER SELECT ================= */
+        .user-selector {
+            padding: 14px 20px;
+            background: #141414;
+            border-bottom: 2px solid #2a2a2a;
+            display: flex;
+            gap: 12px;
+            align-items: center;
+        }
+
+        label {
+            font-size: 14px;
+            opacity: 0.7;
+        }
+
+        select {
+            flex: 1;
+            padding: 8px;
+            background: #1a1a1a;
+            color: #e0e0e0;
+            border: 2px solid #333;
+            font-family: inherit;
+            font-size: 14px;
+        }
+
+        /* ================= CHAT ================= */
+        .chat-container {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+        }
+
+        .chat-container::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        .chat-container::-webkit-scrollbar-track {
+            background: #0a0a0a;
+        }
+
+        .chat-container::-webkit-scrollbar-thumb {
+            background: #333;
+        }
+
+        .message {
+            margin-bottom: 18px;
+            animation: popIn 0.2s steps(3);
+        }
+
+        @keyframes popIn {
+            from {
+                transform: scale(0.95);
+                opacity: 0;
+            }
+
+            to {
+                transform: scale(1);
+                opacity: 1;
+            }
+        }
+
+        .message.user {
+            text-align: right;
+        }
+
+        .message-bubble {
+            display: inline-block;
+            max-width: 70%;
+            padding: 14px 16px;
+            border: 2px solid #333;
+            background: #151515;
+            box-shadow: 2px 2px 0 #000;
+            font-size: 18px;
+            line-height: 1.5;
+        }
+
+        .message.user .message-bubble {
+            background: #1e293b;
+            border-color: #3b82f6;
+        }
+
+        .message.assistant .message-bubble {
+            background: #151515;
+            border-color: #333;
+        }
+
+        .message.error .message-bubble {
+            background: #2a1515;
+            border-color: #ff4444;
+            color: #ff8888;
+        }
+
+        .message-time {
+            font-size: 12px;
+            opacity: 0.5;
+            margin-top: 4px;
+        }
+
+        /* ================= DATA ================= */
+        .data-display {
+            margin-top: 10px;
+        }
+
+        .data-item {
+            margin-top: 8px;
+            padding: 8px;
+            background: #181818;
+            border-left: 3px solid #3b82f6;
+            font-size: 14px;
+        }
+
+        /* ================= INPUT ================= */
+        .input-container {
+            border-top: 2px solid #2a2a2a;
+            padding: 16px;
+        }
+
+        .suggestions {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 10px;
+            flex-wrap: wrap;
+        }
+
+        .suggestion {
+            background: #181818;
+            border: 2px solid #333;
+            padding: 6px 12px;
+            cursor: pointer;
+            box-shadow: 2px 2px 0 #000;
+            font-size: 14px;
+            transition: none;
+        }
+
+        .suggestion:hover {
+            background: #222;
+        }
+
+        .suggestion:active {
+            transform: translate(2px, 2px);
+            box-shadow: none;
+        }
+
+        .input-row {
+            display: flex;
+            gap: 8px;
+        }
+
+        input {
+            flex: 1;
+            padding: 10px;
+            background: #1a1a1a;
+            border: 2px solid #333;
+            color: #fff;
+            font-family: inherit;
+            font-size: 16px;
+        }
+
+        input::placeholder {
+            color: #555;
+        }
+
+        input:focus {
+            outline: none;
+            border-color: #3b82f6;
+        }
+
+        button {
+            padding: 10px 18px;
+            background: #2d2d2d;
+            border: 2px solid #555;
+            color: #fff;
+            font-family: inherit;
+            font-size: 14px;
+            box-shadow: 2px 2px 0 #000;
+            cursor: pointer;
+        }
+
+        button:hover {
+            background: #333;
+        }
+
+        button:active {
+            transform: translate(2px, 2px);
+            box-shadow: none;
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        /* ================= TYPING ================= */
+        .typing-indicator {
+            display: none;
+            padding: 12px;
+            border: 2px solid #333;
+            background: #151515;
+            box-shadow: 2px 2px 0 #000;
+            width: fit-content;
+        }
+
+        .typing-indicator.active {
+            display: inline-block;
+        }
+
+        .typing-indicator span {
+            width: 6px;
+            height: 6px;
+            background: #666;
+            display: inline-block;
+            margin-right: 3px;
+            animation: typing 1.1s steps(2) infinite;
+        }
+
+        .typing-indicator span:nth-child(2) {
+            animation-delay: .15s;
+        }
+
+        .typing-indicator span:nth-child(3) {
+            animation-delay: .3s;
+        }
+
+        @keyframes typing {
+
+            0%,
+            100% {
+                opacity: .3;
+            }
+
+            50% {
+                opacity: 1;
+            }
+        }
+
+        strong {
+            color: #fff;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="container">
+        <div class="header">
+            <h1>RESOURCE MANAGER</h1>
+            <p>AI-powered permission console</p>
+        </div>
+
+        <div class="user-selector">
+            <label>User</label>
+            <select id="userSelect">
+                <option value="user:tharsan">Tharsan (Owner)</option>
+                <option value="user:sarah">Sarah (Viewer)</option>
+            </select>
+        </div>
+
+        <div class="chat-container" id="chatContainer">
+            <div class="message assistant">
+                <div class="message-bubble">
+                    SYSTEM READY_<br><br>
+                    Ask about files, projects, or appointments.
+                    <div class="data-display">
+                        <div class="data-item">> Try: "show my files"</div>
+                        <div class="data-item">> Try: "how many files do I have?"</div>
+                        <div class="data-item">> Try: "create file report.pdf"</div>
+                    </div>
+                </div>
+                <div class="message-time">SYSTEM</div>
+            </div>
+        </div>
+
+        <div class="input-container">
+            <div class="suggestions">
+                <div class="suggestion" onclick="sendSuggestion('show my files')">FILES</div>
+                <div class="suggestion" onclick="sendSuggestion('show appointments')">APPTS</div>
+                <div class="suggestion" onclick="sendSuggestion('list projects')">PROJECTS</div>
+                <div class="suggestion" onclick="sendSuggestion('how many files do I have?')">COUNT</div>
+            </div>
+
+            <div class="input-row">
+                <input id="messageInput" placeholder="> type command..." autofocus />
+                <button id="sendButton" onclick="sendMessage()">SEND</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const chatContainer = document.getElementById("chatContainer");
+        const messageInput = document.getElementById("messageInput");
+        const sendButton = document.getElementById("sendButton");
+        const userSelect = document.getElementById("userSelect");
+
+        function scrollToBottom() {
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
+
+        function addMessage(text, type = 'assistant', data = null) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${type}`;
+
+            let content = text;
+
+            // Only show raw data if it's a list of multiple items
+            if (data && Array.isArray(data) && data.length > 0) {
+                // Check if this is a detailed list response (not a follow-up)
+                const isDetailedList = text.toLowerCase().includes('you have') ||
+                    text.toLowerCase().includes('yep') ||
+                    text.toLowerCase().includes('found');
+
+                if (isDetailedList) {
+                    content += '<div class="data-display">';
+                    data.forEach(item => {
+                        const itemData = typeof item.data === 'string' ? JSON.parse(item.data) : item.data;
+                        content += `<div class="data-item">`;
+                        content += `<strong>${item.resource_type.toUpperCase()}:</strong> `;
+                        content += JSON.stringify(itemData, null, 2).replace(/[{}",]/g, '').trim();
+                        content += `</div>`;
+                    });
+                    content += '</div>';
+                }
+            }
+
+            messageDiv.innerHTML = `
+            <div class="message-bubble">${content}</div>
+            <div class="message-time">${new Date().toLocaleTimeString()}</div>
+        `;
+
+            chatContainer.appendChild(messageDiv);
+            scrollToBottom();
+        }
+
+        function showTyping() {
+            const typingDiv = document.createElement('div');
+            typingDiv.className = 'message assistant';
+            typingDiv.id = 'typing-indicator';
+            typingDiv.innerHTML = `
+            <div class="typing-indicator active">
+                <span></span><span></span><span></span>
+            </div>
+        `;
+            chatContainer.appendChild(typingDiv);
+            scrollToBottom();
+        }
+
+        function hideTyping() {
+            const typing = document.getElementById('typing-indicator');
+            if (typing) typing.remove();
+        }
+
+        async function sendMessage() {
+            const message = messageInput.value.trim();
+            if (!message) return;
+
+            const userId = userSelect.value;
+
+            addMessage(message, 'user');
+            messageInput.value = '';
+
+            sendButton.disabled = true;
+            messageInput.disabled = true;
+            showTyping();
+
+            try {
+                const response = await fetch('/api/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message, userId })
+                });
+
+                const result = await response.json();
+
+                hideTyping();
+
+                if (result.success) {
+                    addMessage(result.message, 'assistant', result.data);
+                } else {
+                    addMessage(result.message || result.error, 'error');
+                }
+            } catch (error) {
+                hideTyping();
+                addMessage('CONNECTION ERROR_', 'error');
+                console.error('Error:', error);
+            } finally {
+                sendButton.disabled = false;
+                messageInput.disabled = false;
+                messageInput.focus();
+            }
+        }
+
+        function sendSuggestion(text) {
+            messageInput.value = text;
+            sendMessage();
+        }
+
+        messageInput.addEventListener("keypress", e => {
+            if (e.key === "Enter") sendMessage();
+        });
+
+        userSelect.addEventListener('change', () => {
+            const userName = userSelect.options[userSelect.selectedIndex].text.split(' ')[0];
+            addMessage(`USER SWITCHED: ${userName}_`, 'assistant');
+        });
+    </script>
+
+</body>
+
+</html>
