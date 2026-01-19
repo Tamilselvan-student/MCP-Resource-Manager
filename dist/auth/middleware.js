@@ -70,10 +70,13 @@ export async function authenticateToken(req, res, next) {
         // Attach user to request
         req.user = user;
         // Check if password change required (EXCEPT on change-password endpoints)
+        // Note: req.path is relative to the router mount point
+        // So /api/auth/change-password becomes /change-password
+        console.log(`🔍 Auth check: path=${req.path}, must_change_password=${user.must_change_password}`);
         if (user.must_change_password &&
-            !req.path.includes('/api/auth/change-password') &&
-            !req.path.includes('/change-password.html') &&
-            !req.path.includes('/api/auth/me')) { // Allow /me to check status
+            !req.path.includes('/change-password') && // Matches both the route and the HTML page
+            !req.path.includes('/me')) { // Allow /me to check status
+            console.log(`🚫 Blocking request to ${req.path} - password change required`);
             res.status(403).json({
                 success: false,
                 error: 'Password change required',
@@ -82,6 +85,7 @@ export async function authenticateToken(req, res, next) {
             });
             return;
         }
+        console.log(`✅ Allowing request to ${req.path}`);
         next();
     }
     catch (error) {

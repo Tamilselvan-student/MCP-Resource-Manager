@@ -134,9 +134,9 @@ export async function addUser(userId: string, username: string, email: string, n
             INSERT INTO users (user_id, username, email, password_hash, role, must_change_password, is_active)
             VALUES ($1, $2, $3, $4, $5, $6, $7)
             RETURNING *;
-        `, [userId, username, email, hashedPassword, role, false, true]);
+        `, [userId, username, email, hashedPassword, role, true, true]);  // Changed to true
 
-        console.log(`✅ Created user in database: ${username} (${email}) with role ${role}`);
+        console.log(`✅ Created user in database: ${username} (${email}) with role ${role} - must change password`);
         return result.rows[0];
     } catch (error) {
         console.error('❌ Error adding user:', error);

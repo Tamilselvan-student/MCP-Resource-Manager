@@ -282,6 +282,39 @@
     </div>
 
     <script>
+        // Check authentication and password change requirement
+        async function checkAuth() {
+            try {
+                const response = await fetch('/api/auth/me', { credentials: 'include' });
+
+                if (!response.ok) {
+                    if (response.status === 403) {
+                        const data = await response.json();
+                        if (data.mustChangePassword) {
+                            window.location.href = '/change-password.html';
+                            return false;
+                        }
+                    }
+                    window.location.href = '/login.html';
+                    return false;
+                }
+
+                const data = await response.json();
+
+                // Check if password change is required
+                if (data.user && data.user.must_change_password) {
+                    window.location.href = '/change-password.html';
+                    return false;
+                }
+
+                return true;
+            } catch (error) {
+                console.error('Auth check failed:', error);
+                window.location.href = '/login.html';
+                return false;
+            }
+        }
+
         async function loadResources() {
             try {
                 const typeFilter = document.getElementById('typeFilter').value;
@@ -346,8 +379,13 @@
             }
         }
 
-        // Load resources on page load
-        loadResources();
+        // Check auth first, then load resources
+        (async () => {
+            const isAuthenticated = await checkAuth();
+            if (isAuthenticated) {
+                loadResources();
+            }
+        })();
     </script>
 </body>
 

@@ -357,8 +357,13 @@
 
                     console.log('✅ Login successful:', data.user.username);
 
-                    // Everyone goes to dashboard
-                    window.location.href = '/dashboard.html';
+                    // Check if password change is required
+                    if (data.user.must_change_password) {
+                        console.log('⚠ Password change required, redirecting...');
+                        window.location.href = '/change-password.html';
+                    } else {
+                        window.location.href = '/dashboard.html';
+                    }
                 } else {
                     // Login failed
                     hideLoading();
