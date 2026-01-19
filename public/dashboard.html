@@ -1,0 +1,896 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard - Resource Manager</title>
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=VT323&display=swap" rel="stylesheet">
+    <style>
+        /* ================= RESET & GLOBAL ================= */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            image-rendering: pixelated;
+        }
+
+        body {
+            background: #0b0b0b;
+            color: #d0d0d0;
+            font-family: 'VT323', monospace;
+            min-height: 100vh;
+        }
+
+        /* ================= HEADER ================= */
+        .header {
+            background: #111;
+            padding: 20px 30px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 2px solid #2a2a2a;
+            position: relative;
+        }
+
+        .header::after {
+            content: "";
+            position: absolute;
+            inset: 0;
+            background: repeating-linear-gradient(to bottom,
+                    rgba(255, 255, 255, 0.03),
+                    rgba(255, 255, 255, 0.03) 1px,
+                    transparent 1px,
+                    transparent 3px);
+            pointer-events: none;
+        }
+
+        .header-title {
+            font-family: 'Press Start 2P', monospace;
+            font-size: 16px;
+            color: #3b82f6;
+            text-shadow: 2px 2px 0px #000;
+        }
+
+        .header-buttons {
+            display: flex;
+            gap: 15px;
+            z-index: 10;
+        }
+
+        .btn {
+            background: #111;
+            color: #d0d0d0;
+            border: 2px solid #333;
+            padding: 10px 20px;
+            cursor: pointer;
+            font-family: 'Press Start 2P', monospace;
+            font-size: 10px;
+            transition: all 0.2s;
+            box-shadow: 2px 2px 0 #000;
+        }
+
+        .btn:hover {
+            background: #2563eb;
+            color: white;
+            border-color: #2563eb;
+            transform: translate(-1px, -1px);
+            box-shadow: 3px 3px 0 #000;
+        }
+
+        .user-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 15px 30px;
+            border-bottom: 1px solid #1c1c1c;
+            background: #0e0e0e;
+            font-size: 16px;
+        }
+
+        .container {
+            padding: 30px;
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        /* ================= CATEGORIES ================= */
+        .category {
+            margin-bottom: 30px;
+            background: #111;
+            border: 3px solid #2f2f2f;
+            box-shadow:
+                inset 0 0 0 2px #000,
+                0 0 0 4px #1c1c1c;
+            /* animation: flicker 6s infinite; */
+        }
+
+        .category-header {
+            background: #1a1a1a;
+            color: #3b82f6;
+            padding: 15px 20px;
+            /* Reduced padding slightly */
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-family: 'Press Start 2P', monospace;
+            font-size: 11px;
+            /* Reduced from 12px */
+            user-select: none;
+            border-bottom: 2px solid #2f2f2f;
+        }
+
+        .category-header:hover {
+            background: #222;
+            color: #60a5fa;
+        }
+
+        .category-content {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.3s ease-out;
+            background: #0b0b0b;
+        }
+
+        .category-content.expanded {
+            max-height: 2000px;
+            transition: max-height 0.5s ease-in;
+        }
+
+        .resource-item {
+            padding: 15px;
+            /* Reduced padding */
+            border-bottom: 1px solid #1c1c1c;
+            background: #0b0b0b;
+        }
+
+        .resource-item:last-child {
+            border-bottom: none;
+        }
+
+        .resource-item:hover {
+            background: #0f0f0f;
+        }
+
+        .resource-name {
+            font-size: 16px;
+            /* font-weight: bold; */
+            /* Removed bold */
+            margin-bottom: 6px;
+            color: #e0e0e0;
+            font-family: 'VT323', monospace;
+        }
+
+        .resource-meta {
+            font-size: 13px;
+            color: #666;
+            font-family: 'VT323', monospace;
+        }
+
+        .no-resources {
+            padding: 30px;
+            text-align: center;
+            color: #444;
+            font-size: 14px;
+        }
+
+        .expand-icon {
+            font-size: 14px;
+            transition: transform 0.3s;
+        }
+
+        .category-header.expanded .expand-icon {
+            transform: rotate(90deg);
+        }
+
+        /* ================= BADGES ================= */
+        .role-badge {
+            display: inline-block;
+            padding: 3px 8px;
+            font-size: 9px;
+            /* font-weight: bold; */
+            /* Removed bold */
+            margin-left: 8px;
+            font-family: 'Press Start 2P', monospace;
+            border: 1px solid currentColor;
+        }
+
+        .role-owner {
+            color: #8b5cf6;
+            background: rgba(139, 92, 246, 0.1);
+        }
+
+        .role-admin {
+            color: #ef4444;
+            background: rgba(239, 68, 68, 0.1);
+        }
+
+        .role-editor {
+            color: #06b6d4;
+            background: rgba(6, 182, 212, 0.1);
+        }
+
+        .role-viewer {
+            color: #6b7280;
+            background: rgba(107, 114, 128, 0.1);
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+        }
+
+        /* ================= FLOATING ADD BUTTON ================= */
+        .floating-add-btn {
+            position: fixed;
+            bottom: 30px;
+            right: 30px;
+            width: 50px;
+            height: 50px;
+            background: #3b82f6;
+            border: 3px solid #1d4ed8;
+            color: white;
+            font-size: 24px;
+            /* font-weight: bold; */
+            /* Removed bold */
+            cursor: pointer;
+            box-shadow: 3px 3px 0 #000;
+            transition: all 0.2s;
+            z-index: 100;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            line-height: 1;
+            /* Retro shape: slightly rounded, effectively square-ish */
+            border-radius: 4px;
+            font-family: 'Press Start 2P', monospace;
+        }
+
+        .floating-add-btn:hover {
+            background: #2563eb;
+            transform: translate(-2px, -2px);
+            box-shadow: 5px 5px 0 #000;
+        }
+
+        .floating-add-btn:active {
+            transform: translate(2px, 2px);
+            box-shadow: 2px 2px 0 #000;
+        }
+
+        /* ================= MODAL ================= */
+        .modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.9);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+            backdrop-filter: blur(2px);
+        }
+
+        .modal-content {
+            background: #111;
+            border: 3px solid #2f2f2f;
+            box-shadow:
+                inset 0 0 0 2px #000,
+                0 0 0 4px #1c1c1c,
+                0 0 50px rgba(0, 0, 0, 0.8);
+            padding: 25px;
+            /* Reduced padding */
+            max-width: 550px;
+            /* Slightly narrower */
+            width: 90%;
+            max-height: 90vh;
+            overflow-y: auto;
+            animation: flicker 4s infinite;
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 12px;
+            border-bottom: 2px solid #2a2a2a;
+        }
+
+        .modal-header h2 {
+            font-family: 'Press Start 2P', monospace;
+            font-size: 12px;
+            /* Reduced from 14px */
+            color: #3b82f6;
+        }
+
+        .close-btn {
+            background: none;
+            border: none;
+            color: #666;
+            font-size: 20px;
+            /* Reduced from 24px */
+            cursor: pointer;
+            font-family: 'VT323', monospace;
+            line-height: 1;
+        }
+
+        .close-btn:hover {
+            color: #ef4444;
+        }
+
+        /* ================= FORMS ================= */
+        .form-group {
+            margin-bottom: 15px;
+            /* Reduced margin */
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 6px;
+            color: #3b82f6;
+            font-family: 'Press Start 2P', monospace;
+            font-size: 9px;
+            /* Reduced from 10px */
+        }
+
+        .form-group input,
+        .form-group select,
+        .form-group textarea {
+            width: 100%;
+            padding: 10px;
+            /* Reduced padding */
+            background: #1a1a1a;
+            border: 2px solid #333;
+            color: #e0e0e0;
+            font-family: 'VT323', monospace;
+            font-size: 16px;
+            /* Reduced from 18px */
+            box-shadow: inset 2px 2px 0 #000;
+        }
+
+        .form-group input:focus,
+        .form-group select:focus,
+        .form-group textarea:focus {
+            outline: none;
+            border-color: #3b82f6;
+            background: #222;
+        }
+
+        .form-group small {
+            display: block;
+            margin-top: 5px;
+            color: #666;
+            font-size: 12px;
+        }
+
+        /* Submit Button in Modal */
+        button[type="submit"] {
+            width: 100%;
+            background: #3b82f6;
+            color: white;
+            border: 3px solid #1d4ed8;
+            padding: 15px;
+            font-family: 'Press Start 2P', monospace;
+            font-size: 12px;
+            cursor: pointer;
+            box-shadow: 4px 4px 0 #000;
+            margin-top: 10px;
+        }
+
+        button[type="submit"]:hover {
+            background: #2563eb;
+            transform: translate(-1px, -1px);
+            box-shadow: 5px 5px 0 #000;
+        }
+
+
+
+        .modal .form-group {
+            margin-bottom: 20px;
+        }
+
+        .modal .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            color: #3b82f6;
+            font-size: 14px;
+        }
+
+        .modal .form-group input,
+        .modal .form-group select,
+        .modal .form-group textarea {
+            width: 100%;
+            padding: 12px;
+            background: #1a1a1a;
+            border: 2px solid #333;
+            color: #e0e0e0;
+            font-family: 'VT323', monospace;
+            font-size: 16px;
+            border-radius: 4px;
+        }
+
+        .modal .form-group input:focus,
+        .modal .form-group select:focus,
+        .modal .form-group textarea:focus {
+            outline: none;
+            border-color: #3b82f6;
+        }
+
+        .modal .form-group textarea {
+            resize: vertical;
+            min-height: 80px;
+        }
+
+        .visibility-checkboxes {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            padding: 10px;
+            background: #1a1a1a;
+            border-radius: 4px;
+        }
+
+        .visibility-checkboxes label {
+            display: flex;
+            align-items: center;
+            cursor: pointer;
+            color: #e0e0e0;
+            margin: 0;
+        }
+
+        .visibility-checkboxes input[type="checkbox"] {
+            width: auto;
+            margin-right: 10px;
+            cursor: pointer;
+        }
+
+        .visibility-checkboxes input[type="checkbox"]:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .modal-actions {
+            display: flex;
+            gap: 15px;
+            margin-top: 25px;
+            padding-top: 20px;
+            border-top: 1px solid #333;
+        }
+
+        .btn-primary {
+            flex: 1;
+            background: #2563eb;
+            border: 2px solid #1d4ed8;
+            color: white;
+            padding: 12px;
+            font-family: 'Press Start 2P', monospace;
+            font-size: 10px;
+            cursor: pointer;
+            border-radius: 4px;
+            transition: all 0.2s;
+        }
+
+        .btn-primary:hover {
+            background: #1d4ed8;
+            transform: translateY(-2px);
+        }
+
+        .btn-secondary {
+            flex: 1;
+            background: #2d2d2d;
+            border: 2px solid #555;
+            color: #e0e0e0;
+            padding: 12px;
+            font-family: 'Press Start 2P', monospace;
+            font-size: 10px;
+            cursor: pointer;
+            border-radius: 4px;
+            transition: all 0.2s;
+        }
+
+        .btn-secondary:hover {
+            background: #3d3d3d;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="header">
+        <div class="header-title">DASHBOARD</div>
+        <div class="header-buttons" id="adminButtons" style="display: none;">
+            <button class="btn" onclick="goToAdminPanel()">ADMIN PANEL</button>
+            <button class="btn" onclick="goToResourceManager()">RESOURCE MANAGER</button>
+        </div>
+    </div>
+
+    <div class="user-bar">
+        <div>
+            <span>User: <strong id="username"></strong></span>
+            <span id="roleBadge"></span>
+        </div>
+        <button class="btn" onclick="logout()">LOGOUT</button>
+    </div>
+
+    <div class="container" id="categoriesContainer">
+        <div class="loading">Loading resources...</div>
+    </div>
+
+    <!-- Floating Add Button (admin/editor only) -->
+    <button class="floating-add-btn" id="floatingAddBtn" style="display: none;" onclick="openAddResourceModal()">
+        +
+    </button>
+
+    <!-- Add Resource Modal -->
+    <div id="addResourceModal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>+ ADD NEW RESOURCE</h2>
+                <button class="close-btn" onclick="closeAddResourceModal()">✕</button>
+            </div>
+
+            <form id="addResourceForm" onsubmit="addResource(event)">
+                <div class="form-group">
+                    <label>Category:</label>
+                    <select id="resourceCategory" required>
+                        <option value="">Select category...</option>
+                        <option value="file">📁 Files</option>
+                        <option value="appointment">📅 Appointments</option>
+                        <option value="project">🚀 Projects</option>
+                        <option value="customer">👥 Customers</option>
+                        <option value="expense">💰 Expenses</option>
+                        <option value="task">✅ Tasks</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label>Name/Title:</label>
+                    <input type="text" id="resourceName" placeholder="e.g., Q1 Budget Report" required>
+                </div>
+
+                <div class="form-group">
+                    <label>Description (optional):</label>
+                    <textarea id="resourceDescription" rows="3" placeholder="Brief description..."></textarea>
+                </div>
+
+                <div class="form-group">
+                    <label>Visible to:</label>
+                    <div class="visibility-checkboxes">
+                        <label>
+                            <input type="checkbox" id="visibleAdmin" checked disabled>
+                            <span>Admin (always visible)</span>
+                        </label>
+                        <label>
+                            <input type="checkbox" id="visibleEditor" checked>
+                            <span>Editor</span>
+                        </label>
+                        <label>
+                            <input type="checkbox" id="visibleViewer">
+                            <span>Viewer</span>
+                        </label>
+                    </div>
+                </div>
+
+                <div class="modal-actions">
+                    <button type="button" class="btn-secondary" onclick="closeAddResourceModal()">CANCEL</button>
+                    <button type="submit" class="btn-primary">CREATE RESOURCE</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        let currentUser = null;
+        let isAdmin = false;
+
+        const ROLES = {
+            'owner': { label: 'Owner', color: 'role-owner' },
+            'admin': { label: 'Admin', color: 'role-admin' },
+            'editor': { label: 'Editor', color: 'role-editor' },
+            'viewer': { label: 'Viewer', color: 'role-viewer' }
+        };
+
+        const CATEGORIES = [
+            { id: 'appointment', name: 'APPOINTMENTS', icon: '📅' },
+            { id: 'file', name: 'FILES', icon: '📁' },
+            { id: 'project', name: 'PROJECTS', icon: '🚀' },
+            { id: 'customer', name: 'CUSTOMERS', icon: '👥' },
+            { id: 'expense', name: 'EXPENSES', icon: '💰' },
+            { id: 'task', name: 'TASKS', icon: '✅' }
+        ];
+
+        async function checkAuth() {
+            try {
+                const response = await fetch('/api/auth/me', { credentials: 'include' });
+
+                if (!response.ok) {
+                    if (response.status === 403) {
+                        const data = await response.json();
+                        if (data.mustChangePassword) {
+                            window.location.href = '/change-password.html';
+                            return;
+                        }
+                    }
+                    window.location.href = '/login.html';
+                    return;
+                }
+
+                const data = await response.json();
+                currentUser = data.user;
+
+                // Double-check from user data
+                if (currentUser && currentUser.must_change_password) {
+                    window.location.href = '/change-password.html';
+                    return;
+                }
+
+                isAdmin = currentUser.role === 'owner' || currentUser.role === 'admin';
+
+                sessionStorage.setItem('currentUser', JSON.stringify(currentUser));
+                document.getElementById('username').textContent = currentUser.username;
+
+                // Show role badge
+                const roleInfo = ROLES[currentUser.role] || { label: currentUser.role, color: 'role-viewer' };
+                document.getElementById('roleBadge').innerHTML = `<span class="role-badge ${roleInfo.color}">${roleInfo.label.toUpperCase()}</span>`;
+
+                // Show admin buttons if admin/owner
+                if (isAdmin) {
+                    document.getElementById('adminButtons').style.display = 'flex';
+                }
+
+                // Show floating add button for admin/editor
+                if (isAdmin || currentUser.role === 'editor') {
+                    document.getElementById('floatingAddBtn').style.display = 'flex';
+                }
+
+                loadAllResources();
+            } catch (error) {
+                console.error('Auth check failed:', error);
+                window.location.href = '/login.html';
+            }
+        }
+
+        async function loadAllResources() {
+            const container = document.getElementById('categoriesContainer');
+            container.innerHTML = '';
+
+            for (const category of CATEGORIES) {
+                await loadCategoryResources(category, container);
+            }
+        }
+
+        async function loadCategoryResources(category, container) {
+            try {
+                const response = await fetch(`/api/resources?type=${category.id}`, {
+                    credentials: 'include'
+                });
+                const data = await response.json();
+                const resources = data.data || []; // API returns {success, data, wildcardAccess}
+
+                // Don't show empty categories to non-admins
+                if (resources.length === 0 && !isAdmin) {
+                    return;
+                }
+
+                const categoryDiv = document.createElement('div');
+                categoryDiv.className = 'category';
+
+                const categoryId = `category-${category.id}`;
+                categoryDiv.innerHTML = `
+                    <div class="category-header" onclick="toggleCategory('${categoryId}', this)">
+                        <span>${category.icon} ${category.name} (${resources.length})</span>
+                        <span class="expand-icon">▶</span>
+                    </div>
+                    <div class="category-content" id="${categoryId}">
+                        ${resources.length === 0
+                        ? '<div class="no-resources">No resources in this category</div>'
+                        : resources.map(resource => renderResource(resource)).join('')
+                    }
+                    </div>
+                `;
+
+                container.appendChild(categoryDiv);
+            } catch (error) {
+                console.error(`Failed to load ${category.name}:`, error);
+            }
+        }
+
+        function renderResource(resource) {
+            const resourceName = resource.data?.name || resource.data?.title || resource.id;
+            const createdDate = new Date(resource.created_at).toLocaleDateString();
+            const resourceType = resource.resource_type || 'Unknown';
+
+            return `
+                <div class="resource-item">
+                    <div class="resource-name">> ${resourceName}</div>
+                    <div class="resource-meta">
+                        Type: ${resourceType} | Created: ${createdDate}
+                    </div>
+                    ${isAdmin ? renderVisibilityControls(resource) : ''}
+                    ${isAdmin ? `
+                        <div style="margin-top: 10px;">
+                            <button onclick="deleteResource('${resource.id}', '${resourceName}')" 
+                                    style="background: #dc2626; color: white; border: none; padding: 6px 12px; cursor: pointer; border-radius: 4px; font-size: 11px; font-family: 'VT323', monospace;">
+                                🗑️ DELETE
+                            </button>
+                        </div>
+                    ` : ''}
+                </div>
+            `;
+        }
+
+        async function deleteResource(resourceId, resourceName) {
+            if (!confirm(`Are you sure you want to delete "${resourceName}"?`)) {
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/resources/${resourceId}`, {
+                    method: 'DELETE',
+                    credentials: 'include'
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    console.log('✅ Resource deleted successfully');
+                    loadAllResources(); // Refresh dashboard
+                } else {
+                    alert('❌ Error: ' + data.error);
+                }
+            } catch (error) {
+                console.error('Error deleting resource:', error);
+                alert('❌ Failed to delete resource');
+            }
+        }
+
+        function renderVisibilityControls(resource) {
+            const roles = [
+                { id: 'admin', label: 'Admin' },
+                { id: 'editor', label: 'Editor' },
+                { id: 'viewer', label: 'Viewer' }
+            ];
+
+            return `
+                <div style="margin-top: 10px; padding: 10px; background: #1a1a1a; border-radius: 4px; font-size: 14px;">
+                    <span style="color: #3b82f6; font-weight: bold;">Visible to:</span>
+                    ${roles.map(role => {
+                const fieldName = `visible_to_${role.id}`;
+                const isChecked = resource[fieldName] !== false; // Default to true if undefined
+
+                return `
+                            <label style="margin-left: 15px; cursor: pointer;">
+                                <input type="checkbox" 
+                                       ${isChecked ? 'checked' : ''}
+                                       onchange="updateVisibility('${resource.id}', '${role.id}', this.checked)"
+                                       style="margin-right: 5px;">
+                                <span>${role.label}</span>
+                            </label>
+                        `;
+            }).join('')}
+                </div>
+            `;
+        }
+
+        async function updateVisibility(resourceId, role, isVisible) {
+            try {
+                const response = await fetch('/api/admin/update-visibility', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    body: JSON.stringify({ resourceId, role, isVisible })
+                });
+
+                const data = await response.json();
+
+                if (!data.success) {
+                    throw new Error(data.error || 'Failed to update visibility');
+                }
+
+                console.log(`✅ Updated visibility: ${resourceId} - ${role} = ${isVisible}`);
+            } catch (error) {
+                console.error('❌ Error updating visibility:', error);
+                alert('Failed to update visibility. Please try again.');
+                // Reload to revert checkbox state
+                location.reload();
+            }
+        }
+
+        function toggleCategory(categoryId, headerElement) {
+            const content = document.getElementById(categoryId);
+
+            if (content.classList.contains('expanded')) {
+                content.classList.remove('expanded');
+                headerElement.classList.remove('expanded');
+            } else {
+                content.classList.add('expanded');
+                headerElement.classList.add('expanded');
+            }
+        }
+
+        function goToAdminPanel() {
+            window.location.href = '/admin.html';
+        }
+
+        function goToResourceManager() {
+            window.location.href = '/index.html';
+        }
+
+        function logout() {
+            fetch('/api/auth/logout', { method: 'POST', credentials: 'include' })
+                .then(() => {
+                    sessionStorage.clear();
+                    window.location.href = '/login.html';
+                });
+        }
+
+        // ================= ADD RESOURCE MODAL =================
+
+        function openAddResourceModal() {
+            document.getElementById('addResourceModal').style.display = 'flex';
+        }
+
+        function closeAddResourceModal() {
+            document.getElementById('addResourceModal').style.display = 'none';
+            document.getElementById('addResourceForm').reset();
+        }
+
+        async function addResource(event) {
+            event.preventDefault();
+
+            const category = document.getElementById('resourceCategory').value;
+            const name = document.getElementById('resourceName').value.trim();
+            const description = document.getElementById('resourceDescription').value.trim();
+
+            const visibility = {
+                visible_to_owner: true,
+                visible_to_admin: true,
+                visible_to_editor: document.getElementById('visibleEditor').checked,
+                visible_to_viewer: document.getElementById('visibleViewer').checked
+            };
+
+            try {
+                const response = await fetch('/api/resources', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    body: JSON.stringify({
+                        resource_type: category,
+                        data: {
+                            name: name,
+                            description: description
+                        },
+                        ...visibility
+                    })
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    console.log('✅ Resource created:', result.resource);
+                    closeAddResourceModal();
+                    loadAllResources(); // Refresh dashboard
+                } else {
+                    alert('Error: ' + result.error);
+                }
+            } catch (error) {
+                console.error('❌ Error creating resource:', error);
+                alert('Failed to create resource. Please try again.');
+            }
+        }
+
+        // Close modal on ESC key
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                closeAddResourceModal();
+            }
+        });
+
+        checkAuth();
+    </script>
+</body>
+
+</html>

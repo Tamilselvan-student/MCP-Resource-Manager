@@ -158,12 +158,28 @@ export class MCPHandler {
 
         try {
             const result: QueryResult = await this.dbPool.query(query, params);
-            console.log(`✅ Found ${result.rows.length} ${resourceType}(s)`);
+            console.log(`✅ Found ${result.rows.length} ${resourceType}(s) in database`);
+
+            // Filter by permission - check each resource individually
+            const accessibleResources = [];
+            for (const resource of result.rows) {
+                const hasAccess = await this.checkResourcePermission(
+                    userId,
+                    resourceType,
+                    resource.id,
+                    'can_view'
+                );
+                if (hasAccess) {
+                    accessibleResources.push(resource);
+                }
+            }
+
+            console.log(`✅ User has access to ${accessibleResources.length} ${resourceType}(s)`);
 
             return {
                 success: true,
-                data: result.rows,
-                message: `Found ${result.rows.length} ${resourceType}(s)`
+                data: accessibleResources,
+                message: `Found ${accessibleResources.length} ${resourceType}(s)`
             };
         } catch (error: any) {
             console.error(`❌ Database error:`, error);
@@ -190,10 +206,11 @@ export class MCPHandler {
 
         console.log(`📖 Reading ${resourceType}:${resourceId} for ${userId}`);
 
-        // Check permission
-        const hasPermission = await this.checkPermission(
+        // Check permission - specific resource first, then wildcard
+        const hasPermission = await this.checkResourcePermission(
             userId,
-            `resource:${resourceType}_*`,
+            resourceType,
+            resourceId,
             'can_view'
         );
 
@@ -247,18 +264,18 @@ export class MCPHandler {
 
         console.log(`➕ Creating ${resourceType} for ${userId}`);
 
-        // Check permission
+        // Check permission - only admins/owners can create
         const hasPermission = await this.checkPermission(
             userId,
             `resource:${resourceType}_*`,
-            'can_edit'
+            'can_delete'
         );
 
         if (!hasPermission) {
             return {
                 success: false,
                 error: 'Access denied: You don\'t have permission to create resources',
-                message: 'You need editor or owner access to create resources.'
+                message: 'Only admins can create resources.'
             };
         }
 
@@ -268,7 +285,36 @@ export class MCPHandler {
                 [resourceType, JSON.stringify(data), userId]
             );
 
-            console.log(`✅ Created ${resourceType} with ID: ${result.rows[0].id}`);
+            const resourceId = result.rows[0].id;
+            console.log(`✅ Created ${resourceType} with ID: ${resourceId}`);
+
+            // Create resource-specific OpenFGA tuple (only creator has access)
+            try {
+                const tupleBody = {
+                    writes: {
+                        tuple_keys: [{
+                            user: userId,
+                            relation: 'owner',
+                            object: `resource:${resourceType}_${resourceId}`
+                        }]
+                    }
+                };
+
+                const fgaResponse = await fetch(`${process.env.FGA_API_URL}/stores/${this.storeId}/write`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(tupleBody)
+                });
+
+                if (fgaResponse.ok) {
+                    console.log(`✅ Created OpenFGA permission for ${resourceType}_${resourceId}`);
+                } else {
+                    console.warn(`⚠️  Failed to create OpenFGA permission, but resource was created`);
+                }
+            } catch (fgaError: any) {
+                console.warn(`⚠️  OpenFGA error (resource still created):`, fgaError.message);
+            }
+
             return {
                 success: true,
                 data: result.rows[0],
@@ -299,10 +345,11 @@ export class MCPHandler {
 
         console.log(`✏️ Updating ${resourceType}:${resourceId} for ${userId}`);
 
-        // Check permission
-        const hasPermission = await this.checkPermission(
+        // Check permission - specific resource first, then wildcard
+        const hasPermission = await this.checkResourcePermission(
             userId,
-            `resource:${resourceType}_*`,
+            resourceType,
+            resourceId,
             'can_edit'
         );
 
@@ -357,10 +404,11 @@ export class MCPHandler {
 
         console.log(`🗑️ Deleting ${resourceType}:${resourceId} for ${userId}`);
 
-        // Check permission - only owners can delete
-        const hasPermission = await this.checkPermission(
+        // Check permission - specific resource first, then wildcard
+        const hasPermission = await this.checkResourcePermission(
             userId,
-            `resource:${resourceType}_*`,
+            resourceType,
+            resourceId,
             'can_delete'
         );
 
@@ -424,6 +472,34 @@ export class MCPHandler {
             // Fail closed - deny access on error
             return false;
         }
+    }
+
+    // Check permission for specific resource with wildcard fallback
+    private async checkResourcePermission(
+        userId: string,
+        resourceType: string,
+        resourceId: string,
+        relation: string
+    ): Promise<boolean> {
+        // First check specific resource permission
+        const specificPermission = await this.checkPermission(
+            userId,
+            `resource:${resourceType}_${resourceId}`,
+            relation
+        );
+
+        if (specificPermission) {
+            return true;
+        }
+
+        // Fallback to wildcard permission (for backward compatibility)
+        const wildcardPermission = await this.checkPermission(
+            userId,
+            `resource:${resourceType}_*`,
+            relation
+        );
+
+        return wildcardPermission;
     }
 
     // ============================================

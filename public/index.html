@@ -335,11 +335,14 @@
         </div>
 
         <div class="user-selector">
-            <label>User</label>
-            <select id="userSelect">
-                <option value="user:tharsan">Tharsan (Owner)</option>
-                <option value="user:sarah">Sarah (Viewer)</option>
-            </select>
+            <div style="flex: 1;">
+                <span style="color: #e0e0e0;">Logged in: <strong id="currentUsername"></strong></span>
+                <span style="color: #e0e0e0; margin-left: 20px;">Role: <strong id="currentUserRole"></strong></span>
+            </div>
+            <button onclick="closeResourceManager()"
+                style="background: #3b82f6; color: #fff; border: none; padding: 10px 20px; cursor: pointer; font-family: 'Press Start 2P', monospace; font-size: 10px; border-radius: 4px;">
+                CLOSE
+            </button>
         </div>
 
         <div class="chat-container" id="chatContainer">
@@ -363,6 +366,9 @@
                 <div class="suggestion" onclick="sendSuggestion('show appointments')">APPTS</div>
                 <div class="suggestion" onclick="sendSuggestion('list projects')">PROJECTS</div>
                 <div class="suggestion" onclick="sendSuggestion('how many files do I have?')">COUNT</div>
+                <div class="suggestion" onclick="window.location.href='/resources.html'">RESOURCES</div>
+                <div class="suggestion" id="adminButton" style="display: none;"
+                    onclick="window.location.href='/admin.html'">ADMIN</div>
             </div>
 
             <div class="input-row">
@@ -373,6 +379,57 @@
     </div>
 
     <script>
+        // ================= AUTHENTICATION CHECK =================
+        // Check if user is authenticated before allowing access
+        async function checkAuth() {
+            try {
+                const response = await fetch('/api/auth/me', {
+                    credentials: 'include' // Include cookies
+                });
+
+                if (!response.ok) {
+                    // Not authenticated, redirect to login
+                    window.location.href = '/login.html';
+                    return false;
+                }
+
+                const data = await response.json();
+
+                // Store user info in sessionStorage for UI
+                sessionStorage.setItem('currentUser', JSON.stringify(data.user));
+
+                console.log('✅ Authenticated as:', data.user.email);
+                return true;
+
+            } catch (error) {
+                console.error('Auth check failed:', error);
+                window.location.href = '/login.html';
+                return false;
+            }
+        }
+
+        // Run auth check immediately
+        checkAuth();
+
+        // Display current user info
+        const user = JSON.parse(sessionStorage.getItem('currentUser'));
+        if (user) {
+            document.getElementById('currentUsername').textContent = user.username;
+            document.getElementById('currentUserRole').textContent = user.role;
+        }
+
+        // Close Resource Manager function
+        function closeResourceManager() {
+            // Send message to parent (dashboard) to close overlay
+            if (window.parent !== window) {
+                window.parent.postMessage('closeResourceManager', '*');
+            } else {
+                // If not in iframe, go to dashboard
+                window.location.href = '/dashboard.html';
+            }
+        }
+
+        // ================= EXISTING CODE =================
         const chatContainer = document.getElementById("chatContainer");
         const messageInput = document.getElementById("messageInput");
         const sendButton = document.getElementById("sendButton");
@@ -439,7 +496,13 @@
             const message = messageInput.value.trim();
             if (!message) return;
 
-            const userId = userSelect.value;
+            // Get current user from sessionStorage
+            const currentUser = JSON.parse(sessionStorage.getItem('currentUser'));
+            if (!currentUser) {
+                addMessage('ERROR: User not found. Please refresh the page.', 'error');
+                return;
+            }
+            const userId = currentUser.user_id;
 
             addMessage(message, 'user');
             messageInput.value = '';
@@ -452,6 +515,7 @@
                 const response = await fetch('/api/chat', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
                     body: JSON.stringify({ message, userId })
                 });
 
@@ -484,10 +548,49 @@
             if (e.key === "Enter") sendMessage();
         });
 
-        userSelect.addEventListener('change', () => {
-            const userName = userSelect.options[userSelect.selectedIndex].text.split(' ')[0];
-            addMessage(`USER SWITCHED: ${userName}_`, 'assistant');
-        });
+        // Load users from database and check admin access
+        async function loadUsersDropdown() {
+            try {
+                const response = await fetch('/api/admin/users');
+                const result = await response.json();
+
+                if (result.success && result.data.length > 0) {
+                    userSelect.innerHTML = result.data.map(user => {
+                        const username = user.username.charAt(0).toUpperCase() + user.username.slice(1);
+                        const roleLabel = user.role.charAt(0).toUpperCase() + user.role.slice(1);
+                        return `<option value="${user.user_id}">${username} (${roleLabel})</option>`;
+                    }).join('');
+                }
+
+                // Check admin access for initial user
+                checkAdminAccess();
+            } catch (error) {
+                console.error('Error loading users:', error);
+            }
+        }
+
+        // Check if current user has admin access
+        async function checkAdminAccess() {
+            const userId = userSelect.value;
+            const adminButton = document.getElementById('adminButton');
+
+            try {
+                const response = await fetch(`/api/user/role?userId=${encodeURIComponent(userId)}`);
+                const result = await response.json();
+
+                if (result.success && result.role === 'admin') {
+                    adminButton.style.display = 'block';
+                } else {
+                    adminButton.style.display = 'none';
+                }
+            } catch (error) {
+                console.error('Error checking admin access:', error);
+                adminButton.style.display = 'none';
+            }
+        }
+
+        // Load users on page load
+        loadUsersDropdown();
     </script>
 
 </body>

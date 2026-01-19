@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>MCP Resource Manager - Login</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <!-- Retro Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=VT323&display=swap" rel="stylesheet">
+
+    <style>
+        /* ================= RESET ================= */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            image-rendering: pixelated;
+        }
+
+        body {
+            font-family: 'VT323', monospace;
+            background: #0b0b0b;
+            color: #d0d0d0;
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        /* ================= CONTAINER ================= */
+        .container {
+            width: 100%;
+            max-width: 600px;
+            background: #111;
+            border: 3px solid #2f2f2f;
+            box-shadow:
+                inset 0 0 0 2px #000,
+                0 0 0 4px #1c1c1c;
+            animation: flicker 4s infinite;
+        }
+
+        @keyframes flicker {
+
+            0%,
+            100% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0.98;
+            }
+        }
+
+        /* ================= HEADER ================= */
+        .header {
+            padding: 20px;
+            border-bottom: 2px solid #2a2a2a;
+            position: relative;
+        }
+
+        .header::after {
+            content: "";
+            position: absolute;
+            inset: 0;
+            background: repeating-linear-gradient(to bottom,
+                    rgba(255, 255, 255, 0.03),
+                    rgba(255, 255, 255, 0.03) 1px,
+                    transparent 1px,
+                    transparent 3px);
+            pointer-events: none;
+        }
+
+        .header h1 {
+            font-family: 'Press Start 2P', monospace;
+            font-size: 16px;
+            margin-bottom: 6px;
+            color: #3b82f6;
+        }
+
+        .header p {
+            font-size: 14px;
+            opacity: 0.7;
+        }
+
+        /* ================= LOGIN FORM ================= */
+        .login-container {
+            padding: 30px;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            font-size: 16px;
+            margin-bottom: 8px;
+            color: #3b82f6;
+        }
+
+        .form-group input {
+            width: 100%;
+            padding: 12px;
+            background: #1a1a1a;
+            border: 2px solid #333;
+            color: #e0e0e0;
+            font-family: 'VT323', monospace;
+            font-size: 18px;
+        }
+
+        .form-group input:focus {
+            outline: none;
+            border-color: #3b82f6;
+        }
+
+        .form-group input::placeholder {
+            color: #555;
+        }
+
+        .password-wrapper {
+            position: relative;
+            display: flex;
+            align-items: center;
+        }
+
+        .password-wrapper input {
+            flex: 1;
+            padding-right: 80px;
+        }
+
+        .toggle-password {
+            position: absolute;
+            right: 8px;
+            width: auto;
+            padding: 6px 12px;
+            background: #3b82f6;
+            border: 1px solid #2563eb;
+            color: white;
+            font-size: 9px;
+            cursor: pointer;
+            box-shadow: none;
+        }
+
+        .toggle-password:hover {
+            background: #2563eb;
+        }
+
+        button {
+            width: 100%;
+            padding: 14px;
+            background: #2d2d2d;
+            border: 2px solid #555;
+            color: #fff;
+            font-family: 'Press Start 2P', monospace;
+            font-size: 12px;
+            box-shadow: 2px 2px 0 #000;
+            cursor: pointer;
+            transition: all 0.1s;
+        }
+
+        button:hover {
+            background: #333;
+        }
+
+        button:active {
+            transform: translate(2px, 2px);
+            box-shadow: none;
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        /* ================= ERROR MESSAGE ================= */
+        .error-message {
+            display: none;
+            padding: 12px;
+            margin-bottom: 20px;
+            background: #2a1515;
+            border: 2px solid #ff0000;
+            color: #ff0000;
+            font-size: 16px;
+            box-shadow: 2px 2px 0 #000;
+        }
+
+        .error-message.show {
+            display: block;
+        }
+
+        /* ================= CREDENTIALS INFO ================= */
+        .credentials-info {
+            margin-top: 30px;
+            padding: 20px;
+            background: #0a0a0a;
+            border: 2px solid #2a2a2a;
+            font-size: 14px;
+        }
+
+        .credentials-info h3 {
+            font-family: 'Press Start 2P', monospace;
+            font-size: 10px;
+            margin-bottom: 12px;
+            color: #3b82f6;
+        }
+
+        .credentials-info ul {
+            list-style: none;
+            padding-left: 0;
+        }
+
+        .credentials-info li {
+            margin-bottom: 6px;
+            opacity: 0.7;
+        }
+
+        .credentials-info li::before {
+            content: "> ";
+            color: #3b82f6;
+        }
+
+        /* ================= LOADING ================= */
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 12px;
+            color: #3b82f6;
+            font-size: 16px;
+        }
+
+        /* ================= PASSWORD TOGGLE ================= */
+        .password-wrapper {
+            position: relative;
+        }
+
+        .toggle-password {
+            position: absolute;
+            right: 12px;
+            top: 50%;
+            transform: translateY(-50%);
+            background: none;
+            border: none;
+            color: #666;
+            cursor: pointer;
+            font-size: 14px;
+            padding: 4px 8px;
+            width: auto;
+        }
+
+        .toggle-password:hover {
+            color: #3b82f6;
+            background: none;
+        }
+
+        .loading.show {
+            display: block;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="container">
+        <div class="header">
+            <h1>SYSTEM LOGIN</h1>
+            <p>MCP Resource Manager v1.0</p>
+        </div>
+
+        <div class="login-container">
+            <div id="errorMessage" class="error-message"></div>
+            <div id="loadingMessage" class="loading">AUTHENTICATING...</div>
+
+            <form id="loginForm">
+                <div class="form-group">
+                    <label for="email">> EMAIL:</label>
+                    <input type="email" id="email" name="email" placeholder="user@example.com" required
+                        autocomplete="email">
+                </div>
+
+                <div class="form-group">
+                    <label for="password">> PASSWORD:</label>
+                    <div class="password-wrapper">
+                        <input type="password" id="password" name="password" placeholder="Enter password" required
+                            autocomplete="current-password">
+                        <button type="button" class="toggle-password" id="togglePasswordBtn">SHOW</button>
+                    </div>
+                </div>
+                <button type="submit" id="loginBtn">LOGIN</button>
+            </form>
+
+            <div class="credentials-info">
+                <h3>GETTING STARTED</h3>
+                <ul>
+                    <li>Use your registered email and password</li>
+                    <li>First-time users must update password</li>
+                    <li>Contact admin for account access</li>
+                    <li>Session expires after 24 hours</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const loginForm = document.getElementById('loginForm');
+        const emailInput = document.getElementById('email');
+        const passwordInput = document.getElementById('password');
+        const loginBtn = document.getElementById('loginBtn');
+        const errorMessage = document.getElementById('errorMessage');
+        const loadingMessage = document.getElementById('loadingMessage');
+
+        function showError(message) {
+            errorMessage.textContent = '❌ ' + message;
+            errorMessage.classList.add('show');
+            loadingMessage.classList.remove('show');
+        }
+
+        function hideError() {
+            errorMessage.classList.remove('show');
+        }
+
+        function showLoading() {
+            loadingMessage.classList.add('show');
+            hideError();
+            loginBtn.disabled = true;
+        }
+
+        function hideLoading() {
+            loadingMessage.classList.remove('show');
+            loginBtn.disabled = false;
+        }
+
+        loginForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            hideError();
+            showLoading();
+
+            const email = emailInput.value.trim();
+            const password = passwordInput.value;
+
+            try {
+                const response = await fetch('/api/auth/login', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    credentials: 'include', // Important for cookies
+                    body: JSON.stringify({ email, password })
+                });
+
+                const data = await response.json();
+
+                if (response.ok && data.success) {
+                    // Store user info in sessionStorage
+                    sessionStorage.setItem('currentUser', JSON.stringify(data.user));
+
+                    console.log('✅ Login successful:', data.user.username);
+
+                    // Everyone goes to dashboard
+                    window.location.href = '/dashboard.html';
+                } else {
+                    // Login failed
+                    hideLoading();
+                    showError(data.error || data.message || 'Login failed');
+                }
+            } catch (error) {
+                console.error('Login error:', error);
+                hideLoading();
+                showError('Connection failed. Please check if server is running.');
+            }
+        });
+
+        // Toggle password visibility
+        const togglePasswordBtn = document.getElementById('togglePasswordBtn');
+        if (togglePasswordBtn) {
+            togglePasswordBtn.addEventListener('click', function (e) {
+                // Prevent form submission if button is inside form
+                e.preventDefault();
+
+                const passwordInput = document.getElementById('password');
+
+                if (passwordInput.type === 'password') {
+                    passwordInput.type = 'text';
+                    togglePasswordBtn.textContent = 'HIDE';
+                } else {
+                    passwordInput.type = 'password';
+                    togglePasswordBtn.textContent = 'SHOW';
+                }
+            });
+        }
+
+        // Auto-focus email field
+        emailInput.focus();
+    </script>
+
+</body>
+
+</html>

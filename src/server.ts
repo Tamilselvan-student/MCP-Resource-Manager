@@ -2,7 +2,18 @@ import express, { Request, Response } from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import path from 'path';
+import { fileURLToPath } from 'url';
+import cookieParser from 'cookie-parser';
 import { MCPHandler, MCPRequest } from './mcp-handler.js';
+import { initDatabase, seedUsers, getUsers, getUserRole, addUser, deleteUser, closeDatabase } from './database.js';
+import pool from './database.js';
+import authRoutes from './auth/routes.js';
+import { authenticateToken, requireRole } from './auth/middleware.js';
+import { AuthRequest } from './auth/types.js';
+
+// ES Module __dirname replacement
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // Load environment variables
 dotenv.config();
@@ -13,7 +24,11 @@ const PORT = process.env.PORT || 3000;
 // Middleware
 app.use(cors());
 app.use(express.json());
+app.use(cookieParser());
 app.use(express.static('public'));
+
+// Authentication routes (add BEFORE other routes)
+app.use('/api/auth', authRoutes);
 
 // Initialize MCP Handler
 const mcpHandler = new MCPHandler();
@@ -459,9 +474,571 @@ Generate a natural, helpful response.`
     }
 }
 
+// Initialize database on startup
+await initDatabase();
+await seedUsers();
+
+// ============================================
+// ADMIN API - ADD USER
+// ============================================
+
+app.post('/api/admin/users', async (req: Request, res: Response) => {
+    const { userId, username, email, name, role } = req.body;
+
+    if (!userId || !role || !email || !username) {
+        return res.status(400).json({ success: false, error: 'userId, username, email, and role required' });
+    }
+
+    try {
+        // Add to database with email and name
+        await addUser(userId, username, email, name || username, role);
+
+        // Map role to OpenFGA relation
+        const roleToRelation: { [key: string]: string } = {
+            'viewer': 'viewer',
+            'editor': 'editor',
+            'admin': 'owner'  // Map admin role to owner relation in OpenFGA
+        };
+
+        const relation = roleToRelation[role] || role;
+
+        // Grant OpenFGA permissions based on role
+        const allResourceTypes = ['file', 'appointment', 'project', 'expense', 'task', 'customer'];
+
+        // Viewers get NO default access, editors and admins get all
+        const resourceTypes = role === 'viewer' ? [] : allResourceTypes;
+
+        const writes = resourceTypes.map(type => ({
+            user: userId,
+            relation: relation,
+            object: `resource:${type}_*`
+        }));
+
+        // Only call OpenFGA if there are tuples to write
+        if (writes.length > 0) {
+            const response = await fetch(`${process.env.FGA_API_URL}/stores/${process.env.FGA_STORE_ID}/write`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ writes: { tuple_keys: writes } })
+            });
+
+            if (!response.ok) {
+                const error = await response.json();
+                // Rollback database insert if OpenFGA fails
+                await deleteUser(userId);
+                return res.json({ success: false, error: error.message || 'Failed to create user' });
+            }
+        }
+
+        console.log(`✅ Created user: ${username} (${email}) with role: ${role} (OpenFGA relation: ${relation}, resources: ${resourceTypes.join(', ') || 'none'})`);
+
+        return res.json({ success: true, message: `User ${username} created with ${role} permissions` });
+    } catch (error: any) {
+        console.error('Error creating user:', error);
+        return res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// ============================================
+// ADMIN API - LIST USERS
+// ============================================
+
+app.get('/api/admin/users', async (req: Request, res: Response) => {
+    try {
+        const users = await getUsers();
+        return res.json({
+            success: true,
+            data: users
+        });
+    } catch (error: any) {
+        console.error('Error fetching users:', error);
+        return res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// ============================================
+// ADMIN API - DELETE USER
+// ============================================
+
+app.delete('/api/admin/users/:userId', async (req: Request, res: Response) => {
+    const userId = decodeURIComponent(req.params.userId);
+
+    try {
+        // Delete from database first (includes protection for default users)
+        await deleteUser(userId);
+
+        // Delete ALL OpenFGA tuples for this user
+        const resourceTypes = ['file', 'appointment', 'project', 'expense', 'task', 'customer'];
+        const allRelations = ['viewer', 'editor', 'owner']; // All OpenFGA relations
+
+        // Build all tuple deletions
+        const tuplesToDelete = [];
+        for (const resourceType of resourceTypes) {
+            for (const relation of allRelations) {
+                tuplesToDelete.push({
+                    user: userId,
+                    relation: relation,
+                    object: `resource:${resourceType}_*`
+                });
+            }
+        }
+
+        // Delete all tuples in one API call
+        const response = await fetch(`${process.env.FGA_API_URL}/stores/${process.env.FGA_STORE_ID}/write`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                deletes: { tuple_keys: tuplesToDelete }
+            })
+        });
+
+        if (!response.ok) {
+            console.warn('Warning: Failed to delete some OpenFGA tuples');
+        }
+
+        console.log(`✅ Deleted user and all tuples: ${userId}`);
+
+        return res.json({ success: true, message: `User ${userId} deleted and permissions revoked` });
+    } catch (error: any) {
+        console.error('Error deleting user:', error);
+        return res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// ============================================
+// USER API - GET ROLE
+// ============================================
+
+app.get('/api/user/role', async (req: Request, res: Response) => {
+    const userId = req.query.userId as string;
+
+    if (!userId) {
+        return res.status(400).json({ success: false, error: 'userId required' });
+    }
+
+    try {
+        const role = await getUserRole(userId);
+
+        if (!role) {
+            return res.status(404).json({ success: false, error: 'User not found' });
+        }
+
+        return res.json({ success: true, role });
+    } catch (error: any) {
+        console.error('Error fetching user role:', error);
+        return res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// ============================================
+// ADMIN API - CHANGE USER ROLE
+// ============================================
+
+app.patch('/api/admin/users/:userId/role', async (req: Request, res: Response) => {
+    const userId = decodeURIComponent(req.params.userId);
+    const { newRole } = req.body;
+
+    if (!newRole || !['viewer', 'editor', 'admin'].includes(newRole)) {
+        return res.status(400).json({ success: false, error: 'Invalid role' });
+    }
+
+    try {
+        // Get current role
+        const currentRole = await getUserRole(userId);
+        if (!currentRole) {
+            return res.status(404).json({ success: false, error: 'User not found' });
+        }
+
+        if (currentRole === newRole) {
+            return res.json({ success: true, message: 'Role unchanged' });
+        }
+
+        // Map role to OpenFGA relation
+        const roleToRelation: { [key: string]: string } = {
+            'viewer': 'viewer',
+            'editor': 'editor',
+            'admin': 'owner'
+        };
+
+        const oldRelation = roleToRelation[currentRole];
+        const newRelation = roleToRelation[newRole];
+
+        // Delete old wildcard tuples and create new ones
+        const allResourceTypes = ['file', 'appointment', 'project', 'expense', 'task', 'customer'];
+
+        // Determine resource types for old and new roles
+        const oldResourceTypes = currentRole === 'viewer' ? [] : allResourceTypes;
+        const newResourceTypes = newRole === 'viewer' ? [] : allResourceTypes;
+
+        const deleteTuples = oldResourceTypes.map(type => ({
+            user: userId,
+            relation: oldRelation,
+            object: `resource:${type}_*`
+        }));
+
+        const createTuples = newResourceTypes.map(type => ({
+            user: userId,
+            relation: newRelation,
+            object: `resource:${type}_*`
+        }));
+
+        // Only call OpenFGA if there are tuples to write or delete
+        if (createTuples.length > 0 || deleteTuples.length > 0) {
+            const requestBody: any = {};
+            if (createTuples.length > 0) {
+                requestBody.writes = { tuple_keys: createTuples };
+            }
+            if (deleteTuples.length > 0) {
+                requestBody.deletes = { tuple_keys: deleteTuples };
+            }
+
+            const response = await fetch(`${process.env.FGA_API_URL}/stores/${process.env.FGA_STORE_ID}/write`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(requestBody)
+            });
+
+            if (!response.ok) {
+                const error = await response.json();
+                return res.json({ success: false, error: error.message || 'Failed to update role' });
+            }
+        }
+
+        // Update database
+        await pool.query('UPDATE users SET role = $1, updated_at = NOW() WHERE user_id = $2', [newRole, userId]);
+
+        console.log(`✅ Changed ${userId} role: ${currentRole} → ${newRole} (OpenFGA: ${oldRelation} → ${newRelation}, resources: ${newResourceTypes.join(', ') || 'none'})`);
+        return res.json({ success: true, message: `Role updated to ${newRole}` });
+    } catch (error: any) {
+        console.error('Error changing user role:', error);
+        return res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// ============================================
+// SERVE ADMIN PANEL
+// ============================================
+
+app.get('/admin', (req: Request, res: Response) => {
+    res.sendFile(path.join(__dirname, '../public/admin.html'));
+});
+
+// ============================================
+// RESOURCES API - CREATE RESOURCE
+// ============================================
+
+app.post('/api/resources', authenticateToken, async (req: AuthRequest, res: Response) => {
+    const { resource_type, data, visible_to_owner, visible_to_admin, visible_to_editor, visible_to_viewer } = req.body;
+
+    // Only admin/editor can create resources
+    if (req.user!.role !== 'owner' && req.user!.role !== 'admin' && req.user!.role !== 'editor') {
+        return res.status(403).json({ success: false, error: 'Unauthorized: Only admin and editor can create resources' });
+    }
+
+    // Validate required fields
+    if (!resource_type || !data) {
+        return res.status(400).json({ success: false, error: 'resource_type and data are required' });
+    }
+
+    try {
+        const result = await pool.query(`
+            INSERT INTO resources (
+                resource_type, 
+                data, 
+                visible_to_owner, 
+                visible_to_admin, 
+                visible_to_editor, 
+                visible_to_viewer,
+                created_by,
+                created_at
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+            RETURNING *
+        `, [
+            resource_type,
+            JSON.stringify(data),
+            visible_to_owner !== false,  // Default true
+            visible_to_admin !== false,  // Default true
+            visible_to_editor !== false, // Default true
+            visible_to_viewer !== false,  // Default true
+            req.user!.user_id  // Add created_by from authenticated user
+        ]);
+
+        const newResource = result.rows[0];
+        console.log(`✅ Resource created: ${data.name || resource_type} (${resource_type}) by ${req.user!.username}`);
+
+        return res.json({
+            success: true,
+            resource: newResource,
+            message: 'Resource created successfully'
+        });
+    } catch (error: any) {
+        console.error('❌ Error creating resource:', error);
+        return res.status(500).json({
+            success: false,
+            error: 'Failed to create resource',
+            details: error.message
+        });
+    }
+});
+
+// Delete resource (admin only)
+app.delete('/api/resources/:id', authenticateToken, requireRole(['owner', 'admin']), async (req: AuthRequest, res: Response) => {
+    const { id } = req.params;
+
+    try {
+        const result = await pool.query('DELETE FROM resources WHERE id = $1 RETURNING *', [id]);
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ success: false, error: 'Resource not found' });
+        }
+
+        const deletedResource = result.rows[0];
+        console.log(`✅ Resource deleted: ${deletedResource.data?.name || id} by ${req.user!.username}`);
+
+        res.json({ success: true, message: 'Resource deleted successfully' });
+    } catch (error: any) {
+        console.error('Error deleting resource:', error);
+        res.status(500).json({ success: false, error: 'Failed to delete resource' });
+    }
+});
+
+// ============================================
+// RESOURCES API - GET ALL RESOURCES
+// ============================================
+
+app.get('/api/resources', authenticateToken, async (req: AuthRequest, res: Response) => {
+    const { type } = req.query;
+    const userRole = req.user!.role;
+
+    try {
+        let query = 'SELECT * FROM resources WHERE 1=1';
+        const params: any[] = [];
+
+        // Filter by resource type
+        if (type) {
+            params.push(type);
+            query += ` AND resource_type = $${params.length}`;
+        }
+
+        // Filter by visibility based on user role (except owner/admin who see all)
+        if (userRole !== 'owner' && userRole !== 'admin') {
+            const visibilityColumn = `visible_to_${userRole}`;
+            query += ` AND ${visibilityColumn} = true`;
+        }
+
+        query += ' ORDER BY created_at DESC';
+
+        const result = await pool.query(query, params);
+
+        // Get all users with wildcard permissions
+        const users = await getUsers();
+        const wildcardAccess = users.map(u => ({
+            user_id: u.user_id,
+            username: u.username,
+            role: u.role
+        }));
+
+        return res.json({
+            success: true,
+            data: result.rows,
+            wildcardAccess  // Show who has wildcard access
+        });
+    } catch (error: any) {
+        console.error('Error fetching resources:', error);
+        return res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// ============================================
+// UPDATE RESOURCE VISIBILITY
+// ============================================
+
+app.post('/api/admin/update-visibility', authenticateToken, async (req: AuthRequest, res: Response) => {
+    const { resourceId, role, isVisible } = req.body;
+
+    // Only admin/owner can update visibility
+    if (req.user!.role !== 'owner' && req.user!.role !== 'admin') {
+        return res.status(403).json({ success: false, error: 'Unauthorized' });
+    }
+
+    try {
+        const validRoles = ['owner', 'admin', 'editor', 'viewer'];
+
+        if (!validRoles.includes(role)) {
+            return res.status(400).json({ success: false, error: 'Invalid role' });
+        }
+
+        const column = `visible_to_${role}`;
+
+        await pool.query(
+            `UPDATE resources SET ${column} = $1 WHERE id = $2`,
+            [isVisible, resourceId]
+        );
+
+        console.log(`✅ Updated visibility: ${resourceId} - ${role} = ${isVisible}`);
+        return res.json({ success: true, resourceId, role, isVisible });
+    } catch (error: any) {
+        console.error('Error updating visibility:', error);
+        return res.status(500).json({ success: false, error: 'Failed to update visibility' });
+    }
+});
+
 // ============================================
 // API ENDPOINTS
 // ============================================
+
+// ============================================
+// ADMIN MANAGEMENT - GRANT/REVOKE ADMIN ACCESS
+// ============================================
+
+// Grant admin access (owner only)
+app.post('/api/admin/grant-admin', authenticateToken, requireRole(['owner']), async (req: AuthRequest, res: Response) => {
+    const { userId, reason } = req.body;
+    const client = await pool.connect();
+
+    try {
+        await client.query('BEGIN');
+
+        // Get current user info
+        const userResult = await client.query(
+            'SELECT id, role, username FROM users WHERE user_id = $1',
+            [userId]
+        );
+
+        if (userResult.rows.length === 0) {
+            throw new Error('User not found');
+        }
+
+        const targetUser = userResult.rows[0];
+        const previousRole = targetUser.role;
+
+        if (previousRole === 'owner') {
+            throw new Error('Cannot modify owner role');
+        }
+
+        // Update user role to admin
+        await client.query(
+            'UPDATE users SET role = $1, updated_at = CURRENT_TIMESTAMP WHERE user_id = $2',
+            ['admin', userId]
+        );
+
+        // Log the grant in admin_grants table
+        await client.query(`
+            INSERT INTO admin_grants (user_id, granted_by, action, previous_role, new_role, reason)
+            VALUES ($1, $2, 'granted', $3, 'admin', $4)
+        `, [targetUser.id, req.user!.id, previousRole, reason]);
+
+        await client.query('COMMIT');
+
+        console.log(`✅ Admin access granted to ${targetUser.username} by ${req.user!.username}`);
+
+        res.json({
+            success: true,
+            message: `Admin access granted to ${targetUser.username}`
+        });
+
+    } catch (error: any) {
+        await client.query('ROLLBACK');
+        console.error('Error granting admin:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message || 'Failed to grant admin access'
+        });
+    } finally {
+        client.release();
+    }
+});
+
+// Revoke admin access (owner only)
+app.post('/api/admin/revoke-admin', authenticateToken, requireRole(['owner']), async (req: AuthRequest, res: Response) => {
+    const { userId, newRole, reason } = req.body;
+    const client = await pool.connect();
+
+    try {
+        await client.query('BEGIN');
+
+        // Validate new role
+        if (!['editor', 'viewer'].includes(newRole)) {
+            throw new Error('Invalid role. Must be editor or viewer');
+        }
+
+        // Get current user info
+        const userResult = await client.query(
+            'SELECT id, role, username FROM users WHERE user_id = $1',
+            [userId]
+        );
+
+        if (userResult.rows.length === 0) {
+            throw new Error('User not found');
+        }
+
+        const targetUser = userResult.rows[0];
+        const previousRole = targetUser.role;
+
+        if (previousRole === 'owner') {
+            throw new Error('Cannot modify owner role');
+        }
+
+        // Update user role
+        await client.query(
+            'UPDATE users SET role = $1, updated_at = CURRENT_TIMESTAMP WHERE user_id = $2',
+            [newRole, userId]
+        );
+
+        // Log the revocation in admin_grants table
+        await client.query(`
+            INSERT INTO admin_grants (user_id, granted_by, action, previous_role, new_role, reason)
+            VALUES ($1, $2, 'revoked', $3, $4, $5)
+        `, [targetUser.id, req.user!.id, previousRole, newRole, reason]);
+
+        await client.query('COMMIT');
+
+        console.log(`✅ Admin access revoked from ${targetUser.username} by ${req.user!.username}, new role: ${newRole}`);
+
+        res.json({
+            success: true,
+            message: `Admin access revoked from ${targetUser.username}`
+        });
+
+    } catch (error: any) {
+        await client.query('ROLLBACK');
+        console.error('Error revoking admin:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message || 'Failed to revoke admin access'
+        });
+    } finally {
+        client.release();
+    }
+});
+
+// Get admin grant history (owner only)
+app.get('/api/admin/grant-history', authenticateToken, requireRole(['owner']), async (req: AuthRequest, res: Response) => {
+    try {
+        const result = await pool.query(`
+            SELECT 
+                ag.id,
+                ag.action,
+                u.username as target_user,
+                gb.username as granted_by_user,
+                ag.previous_role,
+                ag.new_role,
+                ag.reason,
+                ag.created_at
+            FROM admin_grants ag
+            JOIN users u ON ag.user_id = u.id
+            JOIN users gb ON ag.granted_by = gb.id
+            ORDER BY ag.created_at DESC
+            LIMIT 50
+        `);
+
+        res.json({ success: true, history: result.rows });
+    } catch (error: any) {
+        console.error('Error fetching grant history:', error);
+        res.status(500).json({ success: false, error: 'Failed to fetch grant history' });
+    }
+});
 
 // Health check
 app.get('/health', (req: Request, res: Response) => {
@@ -493,6 +1070,24 @@ app.post('/api/chat', async (req: Request, res: Response) => {
                 success: false,
                 message: "I didn't quite understand that. Try asking me to show, create, update, or delete files, appointments, projects, or other resources."
             });
+        }
+
+        // RESTRICT APPOINTMENTS TO ADMIN/OWNER ONLY
+        if (mcpRequest.resourceType === 'appointment') {
+            // Get user role from database
+            const userResult = await pool.query(
+                'SELECT role FROM users WHERE user_id = $1',
+                [userId]
+            );
+
+            if (userResult.rows.length === 0 ||
+                (userResult.rows[0].role !== 'owner' && userResult.rows[0].role !== 'admin')) {
+                return res.json({
+                    success: false,
+                    response: 'Access denied. Appointments are only accessible to administrators.',
+                    message: 'Access denied. Appointments are only accessible to administrators.'
+                });
+            }
         }
 
         // Handle meta actions (greetings, identity, etc.)

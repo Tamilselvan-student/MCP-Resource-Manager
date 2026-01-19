@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RESOURCES MANAGEMENT</title>
+
+    <!-- Retro Fonts (matching index.html) -->
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=VT323&display=swap" rel="stylesheet">
+
+    <style>
+        /* ================= RESET ================= */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            image-rendering: pixelated;
+        }
+
+        body {
+            font-family: 'VT323', monospace;
+            background: #0b0b0b;
+            color: #d0d0d0;
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        /* ================= CONTAINER ================= */
+        .container {
+            width: 100%;
+            max-width: 920px;
+            background: #111;
+            border: 3px solid #2f2f2f;
+            box-shadow:
+                inset 0 0 0 2px #000,
+                0 0 0 4px #1c1c1c;
+            animation: flicker 4s infinite;
+        }
+
+        @keyframes flicker {
+
+            0%,
+            100% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0.98;
+            }
+        }
+
+        /* ================= HEADER ================= */
+        .header {
+            padding: 20px;
+            border-bottom: 2px solid #2a2a2a;
+            position: relative;
+        }
+
+        .header::after {
+            content: "";
+            position: absolute;
+            inset: 0;
+            background: repeating-linear-gradient(to bottom,
+                    rgba(255, 255, 255, 0.03),
+                    rgba(255, 255, 255, 0.03) 1px,
+                    transparent 1px,
+                    transparent 3px);
+            pointer-events: none;
+        }
+
+        .header h1 {
+            font-family: 'Press Start 2P', monospace;
+            font-size: 16px;
+            margin-bottom: 6px;
+        }
+
+        .header p {
+            font-size: 14px;
+            opacity: 0.7;
+        }
+
+        .nav-links {
+            margin-top: 12px;
+            display: flex;
+            gap: 10px;
+        }
+
+        .nav-links a {
+            background: #181818;
+            border: 2px solid #333;
+            padding: 6px 12px;
+            text-decoration: none;
+            color: #d0d0d0;
+            box-shadow: 2px 2px 0 #000;
+            font-size: 14px;
+            transition: none;
+        }
+
+        .nav-links a:hover {
+            background: #222;
+        }
+
+        .nav-links a:active {
+            transform: translate(2px, 2px);
+            box-shadow: none;
+        }
+
+        /* ================= PANEL ================= */
+        .panel {
+            padding: 20px;
+            border-bottom: 2px solid #2a2a2a;
+        }
+
+        .panel h2 {
+            font-family: 'Press Start 2P', monospace;
+            font-size: 12px;
+            margin-bottom: 16px;
+            padding-bottom: 8px;
+            border-bottom: 2px solid #2a2a2a;
+        }
+
+        /* ================= FILTER ================= */
+        .filter-group {
+            margin-bottom: 16px;
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .filter-group label {
+            font-size: 14px;
+            opacity: 0.7;
+        }
+
+        .filter-group select {
+            padding: 6px 12px;
+            background: #1a1a1a;
+            border: 2px solid #333;
+            color: #e0e0e0;
+            font-family: inherit;
+            font-size: 14px;
+            cursor: pointer;
+        }
+
+        .filter-group select:focus {
+            outline: none;
+            border-color: #3b82f6;
+        }
+
+        /* ================= RESOURCE LIST ================= */
+        .resource-list {
+            background: #0a0a0a;
+            border: 2px solid #2a2a2a;
+            padding: 12px;
+            max-height: 500px;
+            overflow-y: auto;
+        }
+
+        .resource-list::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        .resource-list::-webkit-scrollbar-track {
+            background: #0a0a0a;
+        }
+
+        .resource-list::-webkit-scrollbar-thumb {
+            background: #333;
+        }
+
+        .resource-item {
+            padding: 12px;
+            border-bottom: 1px solid #222;
+            font-size: 14px;
+        }
+
+        .resource-item:last-child {
+            border-bottom: none;
+        }
+
+        .resource-type {
+            display: inline-block;
+            padding: 2px 8px;
+            background: #1a1a1a;
+            border: 1px solid #333;
+            font-size: 11px;
+            margin-right: 8px;
+            text-transform: uppercase;
+        }
+
+        .resource-name {
+            font-weight: bold;
+            margin-bottom: 4px;
+        }
+
+        .resource-access {
+            font-size: 12px;
+            opacity: 0.7;
+            margin-top: 6px;
+        }
+
+        .access-badge {
+            display: inline-block;
+            padding: 2px 6px;
+            background: #2a2a2a;
+            border: 1px solid #444;
+            margin-right: 6px;
+            margin-top: 4px;
+            font-size: 11px;
+        }
+
+        .access-badge.viewer {
+            border-color: #4a4;
+            color: #8f8;
+        }
+
+        .access-badge.editor {
+            border-color: #44a;
+            color: #88f;
+        }
+
+        .access-badge.admin {
+            border-color: #a44;
+            color: #f88;
+        }
+
+        /* ================= INFO BOX ================= */
+        .info-box {
+            background: #1a1a1a;
+            border: 2px solid #333;
+            padding: 12px;
+            margin-bottom: 16px;
+            font-size: 13px;
+        }
+
+        .info-box strong {
+            color: #8f8;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>RESOURCES</h1>
+            <p>View All Resources & Access</p>
+            <div class="nav-links">
+                <a href="/">← BACK</a>
+                <a href="/admin.html">ADMIN</a>
+                <a href="#" onclick="loadResources(); return false;">REFRESH</a>
+            </div>
+        </div>
+
+        <div class="panel">
+            <div class="info-box">
+                <strong>WILDCARD ACCESS:</strong> Shows users with global permissions (viewer/editor/admin) for all
+                resources of each type.
+            </div>
+
+            <div class="filter-group">
+                <label>Filter:</label>
+                <select id="typeFilter" onchange="loadResources()">
+                    <option value="">All Types</option>
+                    <option value="file">Files</option>
+                    <option value="appointment">Appointments</option>
+                    <option value="project">Projects</option>
+                    <option value="expense">Expenses</option>
+                    <option value="task">Tasks</option>
+                    <option value="customer">Customers</option>
+                </select>
+            </div>
+
+            <h2>RESOURCE LIST</h2>
+            <div class="resource-list" id="resourceList">
+                <div class="resource-item">Loading resources...</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        async function loadResources() {
+            try {
+                const typeFilter = document.getElementById('typeFilter').value;
+                const url = typeFilter ? `/api/resources?type=${typeFilter}` : '/api/resources';
+
+                const response = await fetch(url);
+                const result = await response.json();
+
+                const listEl = document.getElementById('resourceList');
+
+                if (result.success && result.data.length > 0) {
+                    // Group wildcard access by role
+                    const wildcardHtml = result.wildcardAccess ? `
+                        <div class="resource-item">
+                            <div class="resource-name">🌐 WILDCARD ACCESS (All Resources)</div>
+                            <div class="resource-access">
+                                ${result.wildcardAccess.map(user =>
+                        `<span class="access-badge ${user.role}">${user.username} [${user.role.toUpperCase()}]</span>`
+                    ).join('')}
+                            </div>
+                        </div>
+                    ` : '';
+
+                    const resourcesHtml = result.data.map(resource => {
+                        const data = typeof resource.data === 'string' ? JSON.parse(resource.data) : resource.data;
+                        const name = data.name || data.title || data.description || 'Unnamed';
+
+                        // Show who has access based on wildcard permissions
+                        const accessList = result.wildcardAccess.map(user => {
+                            let accessType = '';
+                            if (user.role === 'admin') accessType = 'Full Control';
+                            else if (user.role === 'editor') accessType = 'Read + Write';
+                            else if (user.role === 'viewer') accessType = 'Read Only';
+
+                            return `<span class="access-badge ${user.role}">${user.username} (${accessType})</span>`;
+                        }).join('');
+
+                        return `
+                            <div class="resource-item">
+                                <div class="resource-name">
+                                    <span class="resource-type">${resource.resource_type}</span>
+                                    ${name}
+                                </div>
+                                <div class="resource-access">
+                                    <strong>Access:</strong> ${accessList}
+                                </div>
+                                <div class="resource-access" style="margin-top: 4px; opacity: 0.6;">
+                                    ID: ${resource.id}
+                                </div>
+                            </div>
+                        `;
+                    }).join('');
+
+                    listEl.innerHTML = wildcardHtml + resourcesHtml;
+                } else {
+                    listEl.innerHTML = '<div class="resource-item">No resources found</div>';
+                }
+            } catch (error) {
+                console.error('Error loading resources:', error);
+                document.getElementById('resourceList').innerHTML =
+                    '<div class="resource-item">Error loading resources</div>';
+            }
+        }
+
+        // Load resources on page load
+        loadResources();
+    </script>
+</body>
+
+</html>
