@@ -8,6 +8,7 @@ import { MCPHandler, MCPRequest } from './mcp-handler.js';
 import { initDatabase, seedUsers, getUsers, getUserRole, addUser, deleteUser, closeDatabase } from './database.js';
 import pool from './database.js';
 import authRoutes from './auth/routes.js';
+import chatRoutes from './chat/routes.js';
 import { authenticateToken, requireRole } from './auth/middleware.js';
 import { AuthRequest } from './auth/types.js';
 
@@ -29,6 +30,9 @@ app.use(express.static('public'));
 
 // Authentication routes (add BEFORE other routes)
 app.use('/api/auth', authRoutes);
+
+// Chat routes (admin assistant)
+app.use('/api/chat', chatRoutes);
 
 // Initialize MCP Handler
 const mcpHandler = new MCPHandler();
@@ -375,6 +379,11 @@ Response style:
 "I'm your **Resource Manager assistant**.
 I help you see and manage what you're allowed to access."
 
+If user asks **"What are you?"**
+Response style:
+"I'm your **Resource Manager assistant**.
+I help you see and manage what you're allowed to access."
+
 If user asks **"What can you do?"**
 • Files
 • Appointments
@@ -388,6 +397,18 @@ If user asks **"Who am I?"**
 
 Example:
 "You're **Tharsan** — the **owner** of this workspace."
+
+If user says **"I'm not sure who I am"**
+• Ask for their name
+• Confirm their role
+
+If user says **"I don't know who I am"**
+• Ask for their name
+• Confirm their role
+
+If user says **bye** or **goodbye**
+• Respond warmly and briefly
+• Mention what you can help with
 
 ACCESS / PERMISSION QUESTIONS
 If user asks **"Why can't I see this file?"**, **"Why no access?"**, etc:
@@ -704,7 +725,7 @@ app.patch('/api/admin/users/:userId/role', async (req: Request, res: Response) =
             }
         }
 
-        // Update database
+        // Update database (use user_id not id - userId is a string like "user:watersheep")
         await pool.query('UPDATE users SET role = $1, updated_at = NOW() WHERE user_id = $2', [newRole, userId]);
 
         console.log(`✅ Changed ${userId} role: ${currentRole} → ${newRole} (OpenFGA: ${oldRelation} → ${newRelation}, resources: ${newResourceTypes.join(', ') || 'none'})`);
@@ -902,7 +923,7 @@ app.post('/api/admin/grant-admin', authenticateToken, requireRole(['owner']), as
 
         // Get current user info
         const userResult = await client.query(
-            'SELECT id, role, username FROM users WHERE user_id = $1',
+            'SELECT id, role, username FROM users WHERE id = $1',
             [userId]
         );
 
@@ -917,7 +938,7 @@ app.post('/api/admin/grant-admin', authenticateToken, requireRole(['owner']), as
             throw new Error('Cannot modify owner role');
         }
 
-        // Update user role to admin
+        // Update user role to admin (use user_id not id - userId is a string)
         await client.query(
             'UPDATE users SET role = $1, updated_at = CURRENT_TIMESTAMP WHERE user_id = $2',
             ['admin', userId]
@@ -965,7 +986,7 @@ app.post('/api/admin/revoke-admin', authenticateToken, requireRole(['owner']), a
 
         // Get current user info
         const userResult = await client.query(
-            'SELECT id, role, username FROM users WHERE user_id = $1',
+            'SELECT id, role, username FROM users WHERE id = $1',
             [userId]
         );
 
@@ -980,7 +1001,7 @@ app.post('/api/admin/revoke-admin', authenticateToken, requireRole(['owner']), a
             throw new Error('Cannot modify owner role');
         }
 
-        // Update user role
+        // Update user role (use user_id not id - userId is a string)
         await client.query(
             'UPDATE users SET role = $1, updated_at = CURRENT_TIMESTAMP WHERE user_id = $2',
             [newRole, userId]
@@ -1076,7 +1097,7 @@ app.post('/api/chat', async (req: Request, res: Response) => {
         if (mcpRequest.resourceType === 'appointment') {
             // Get user role from database
             const userResult = await pool.query(
-                'SELECT role FROM users WHERE user_id = $1',
+                'SELECT role FROM users WHERE id = $1',
                 [userId]
             );
 

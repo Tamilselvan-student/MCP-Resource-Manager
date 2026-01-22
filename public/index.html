@@ -346,29 +346,18 @@
         </div>
 
         <div class="chat-container" id="chatContainer">
-            <div class="message assistant">
-                <div class="message-bubble">
-                    SYSTEM READY_<br><br>
-                    Ask about files, projects, or appointments.
-                    <div class="data-display">
-                        <div class="data-item">> Try: "show my files"</div>
-                        <div class="data-item">> Try: "how many files do I have?"</div>
-                        <div class="data-item">> Try: "create file report.pdf"</div>
-                    </div>
-                </div>
-                <div class="message-time">SYSTEM</div>
-            </div>
+            <!-- Welcome message will be added dynamically -->
         </div>
 
         <div class="input-container">
             <div class="suggestions">
-                <div class="suggestion" onclick="sendSuggestion('show my files')">FILES</div>
-                <div class="suggestion" onclick="sendSuggestion('show appointments')">APPTS</div>
-                <div class="suggestion" onclick="sendSuggestion('list projects')">PROJECTS</div>
-                <div class="suggestion" onclick="sendSuggestion('how many files do I have?')">COUNT</div>
-                <div class="suggestion" onclick="window.location.href='/resources.html'">RESOURCES</div>
+                <div class="suggestion" onclick="sendSuggestion('help')">HELP</div>
+                <div class="suggestion" onclick="sendSuggestion('list all users')">USERS</div>
+                <div class="suggestion" onclick="sendSuggestion('show system stats')">STATS</div>
+                <div class="suggestion" onclick="sendSuggestion('list all resources')">RESOURCES</div>
                 <div class="suggestion" id="adminButton" style="display: none;"
                     onclick="window.location.href='/admin.html'">ADMIN</div>
+                <div class="suggestion" onclick="window.location.href='/dashboard.html'">DASHBOARD</div>
             </div>
 
             <div class="input-row">
@@ -395,8 +384,23 @@
 
                 const data = await response.json();
 
+                // Check if user must change password
+                if (data.user.must_change_password) {
+                    window.location.href = '/change-password.html';
+                    return false;
+                }
+
                 // Store user info in sessionStorage for UI
                 sessionStorage.setItem('currentUser', JSON.stringify(data.user));
+
+                // Display user info
+                document.getElementById('currentUsername').textContent = data.user.username;
+                document.getElementById('currentUserRole').textContent = data.user.role;
+
+                // Show admin button if admin/owner
+                if (data.user.role === 'admin' || data.user.role === 'owner') {
+                    document.getElementById('adminButton').style.display = 'block';
+                }
 
                 console.log('✅ Authenticated as:', data.user.email);
                 return true;
@@ -408,15 +412,56 @@
             }
         }
 
-        // Run auth check immediately
-        checkAuth();
+        // Show welcome message with user info
+        function showWelcomeMessage() {
+            const user = JSON.parse(sessionStorage.getItem('currentUser'));
+            if (!user) return;
 
-        // Display current user info
-        const user = JSON.parse(sessionStorage.getItem('currentUser'));
-        if (user) {
-            document.getElementById('currentUsername').textContent = user.username;
-            document.getElementById('currentUserRole').textContent = user.role;
+            const roleEmoji = {
+                owner: '🟣',
+                admin: '🔴',
+                editor: '🔵',
+                viewer: '⚪'
+            }[user.role] || '⚪';
+
+            const welcomeText = `👋 Hey there, ${user.username}! I'm your admin assistant.
+
+I can help you with:
+- Managing users and roles
+- Checking resource access
+- Viewing system stats
+- Creating and deleting resources
+- And much more!
+
+Type 'help' to see all commands, or just ask me anything naturally!
+
+${roleEmoji} Your current role: **${user.role}**`;
+
+            addMessage(welcomeText, 'assistant');
         }
+
+        // Logout function
+        async function logout() {
+            try {
+                await fetch('/api/auth/logout', {
+                    method: 'POST',
+                    credentials: 'include'
+                });
+            } catch (error) {
+                console.error('Logout error:', error);
+            }
+
+            sessionStorage.clear();
+            window.location.href = '/login.html';
+        }
+
+        // Run auth check on load
+        window.addEventListener('DOMContentLoaded', async () => {
+            const authenticated = await checkAuth();
+            if (authenticated) {
+                showWelcomeMessage();
+            }
+        });
 
         // Close Resource Manager function
         function closeResourceManager() {
@@ -512,11 +557,11 @@
             showTyping();
 
             try {
-                const response = await fetch('/api/chat', {
+                const response = await fetch('/api/chat/message', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     credentials: 'include',
-                    body: JSON.stringify({ message, userId })
+                    body: JSON.stringify({ message })
                 });
 
                 const result = await response.json();
@@ -524,9 +569,9 @@
                 hideTyping();
 
                 if (result.success) {
-                    addMessage(result.message, 'assistant', result.data);
+                    addMessage(result.reply, 'assistant', result.data);
                 } else {
-                    addMessage(result.message || result.error, 'error');
+                    addMessage(result.reply || result.error, 'error');
                 }
             } catch (error) {
                 hideTyping();

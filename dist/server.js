@@ -8,6 +8,7 @@ import { MCPHandler } from './mcp-handler.js';
 import { initDatabase, seedUsers, getUsers, getUserRole, addUser, deleteUser } from './database.js';
 import pool from './database.js';
 import authRoutes from './auth/routes.js';
+import chatRoutes from './chat/routes.js';
 import { authenticateToken, requireRole } from './auth/middleware.js';
 // ES Module __dirname replacement
 const __filename = fileURLToPath(import.meta.url);
@@ -23,6 +24,8 @@ app.use(cookieParser());
 app.use(express.static('public'));
 // Authentication routes (add BEFORE other routes)
 app.use('/api/auth', authRoutes);
+// Chat routes (admin assistant)
+app.use('/api/chat', chatRoutes);
 // Initialize MCP Handler
 const mcpHandler = new MCPHandler();
 // Groq AI (Free & Fast) - Optional
@@ -334,6 +337,11 @@ Response style:
 "I'm your **Resource Manager assistant**.
 I help you see and manage what you're allowed to access."
 
+If user asks **"What are you?"**
+Response style:
+"I'm your **Resource Manager assistant**.
+I help you see and manage what you're allowed to access."
+
 If user asks **"What can you do?"**
 • Files
 • Appointments
@@ -347,6 +355,18 @@ If user asks **"Who am I?"**
 
 Example:
 "You're **Tharsan** — the **owner** of this workspace."
+
+If user says **"I'm not sure who I am"**
+• Ask for their name
+• Confirm their role
+
+If user says **"I don't know who I am"**
+• Ask for their name
+• Confirm their role
+
+If user says **bye** or **goodbye**
+• Respond warmly and briefly
+• Mention what you can help with
 
 ACCESS / PERMISSION QUESTIONS
 If user asks **"Why can't I see this file?"**, **"Why no access?"**, etc:
@@ -621,7 +641,7 @@ app.patch('/api/admin/users/:userId/role', async (req, res) => {
                 return res.json({ success: false, error: error.message || 'Failed to update role' });
             }
         }
-        // Update database
+        // Update database (use user_id not id - userId is a string like "user:watersheep")
         await pool.query('UPDATE users SET role = $1, updated_at = NOW() WHERE user_id = $2', [newRole, userId]);
         console.log(`✅ Changed ${userId} role: ${currentRole} → ${newRole} (OpenFGA: ${oldRelation} → ${newRelation}, resources: ${newResourceTypes.join(', ') || 'none'})`);
         return res.json({ success: true, message: `Role updated to ${newRole}` });
@@ -783,7 +803,7 @@ app.post('/api/admin/grant-admin', authenticateToken, requireRole(['owner']), as
     try {
         await client.query('BEGIN');
         // Get current user info
-        const userResult = await client.query('SELECT id, role, username FROM users WHERE user_id = $1', [userId]);
+        const userResult = await client.query('SELECT id, role, username FROM users WHERE id = $1', [userId]);
         if (userResult.rows.length === 0) {
             throw new Error('User not found');
         }
@@ -792,7 +812,7 @@ app.post('/api/admin/grant-admin', authenticateToken, requireRole(['owner']), as
         if (previousRole === 'owner') {
             throw new Error('Cannot modify owner role');
         }
-        // Update user role to admin
+        // Update user role to admin (use user_id not id - userId is a string)
         await client.query('UPDATE users SET role = $1, updated_at = CURRENT_TIMESTAMP WHERE user_id = $2', ['admin', userId]);
         // Log the grant in admin_grants table
         await client.query(`
@@ -829,7 +849,7 @@ app.post('/api/admin/revoke-admin', authenticateToken, requireRole(['owner']), a
             throw new Error('Invalid role. Must be editor or viewer');
         }
         // Get current user info
-        const userResult = await client.query('SELECT id, role, username FROM users WHERE user_id = $1', [userId]);
+        const userResult = await client.query('SELECT id, role, username FROM users WHERE id = $1', [userId]);
         if (userResult.rows.length === 0) {
             throw new Error('User not found');
         }
@@ -838,7 +858,7 @@ app.post('/api/admin/revoke-admin', authenticateToken, requireRole(['owner']), a
         if (previousRole === 'owner') {
             throw new Error('Cannot modify owner role');
         }
-        // Update user role
+        // Update user role (use user_id not id - userId is a string)
         await client.query('UPDATE users SET role = $1, updated_at = CURRENT_TIMESTAMP WHERE user_id = $2', [newRole, userId]);
         // Log the revocation in admin_grants table
         await client.query(`
@@ -919,7 +939,7 @@ app.post('/api/chat', async (req, res) => {
         // RESTRICT APPOINTMENTS TO ADMIN/OWNER ONLY
         if (mcpRequest.resourceType === 'appointment') {
             // Get user role from database
-            const userResult = await pool.query('SELECT role FROM users WHERE user_id = $1', [userId]);
+            const userResult = await pool.query('SELECT role FROM users WHERE id = $1', [userId]);
             if (userResult.rows.length === 0 ||
                 (userResult.rows[0].role !== 'owner' && userResult.rows[0].role !== 'admin')) {
                 return res.json({

@@ -70,7 +70,7 @@ router.post('/signup', async (req: AuthRequest, res: Response) => {
 
         // Check if user_id already exists
         const existingUserId = await pool.query(
-            'SELECT user_id FROM users WHERE user_id = $1',
+            'SELECT id FROM users WHERE id = $1',
             [userId]
         );
 
@@ -95,7 +95,7 @@ router.post('/signup', async (req: AuthRequest, res: Response) => {
 
         // Generate JWT token
         const token = generateToken({
-            userId: newUser.user_id,
+            userId: newUser.id,
             email: newUser.email,
             role: newUser.role
         });
@@ -190,7 +190,7 @@ router.post('/login', async (req: AuthRequest, res: Response) => {
 
         // Generate JWT token
         const token = generateToken({
-            userId: user.user_id,
+            userId: user.id,
             email: user.email,
             role: user.role
         });
@@ -207,8 +207,8 @@ router.post('/login', async (req: AuthRequest, res: Response) => {
         await pool.query(`
             UPDATE users 
             SET last_login = NOW() 
-            WHERE user_id = $1
-        `, [user.user_id]);
+            WHERE id = $1
+        `, [user.id]);
 
         console.log(`✅ User logged in: ${user.email} (${user.role})`);
 
@@ -217,7 +217,7 @@ router.post('/login', async (req: AuthRequest, res: Response) => {
             success: true,
             user: {
                 id: user.id,
-                user_id: user.user_id,
+                user_id: user.id,
                 username: user.username,
                 email: user.email,
                 role: user.role,
@@ -252,7 +252,7 @@ router.get('/me', authenticateToken, async (req: AuthRequest, res: Response) => 
         success: true,
         user: {
             id: req.user.id,
-            user_id: req.user.user_id,
+            user_id: req.user.id,
             username: req.user.username,
             email: req.user.email,
             role: req.user.role,
@@ -336,8 +336,8 @@ router.post('/change-password', authenticateToken, async (req: AuthRequest, res:
             SET password_hash = $1, 
                 must_change_password = FALSE,
                 updated_at = NOW()
-            WHERE user_id = $2
-        `, [newPasswordHash, req.user.user_id]);
+            WHERE id = $2
+        `, [newPasswordHash, req.user.id]);
 
         console.log(`✅ Password changed for user: ${req.user.email}`);
 

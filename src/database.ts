@@ -106,7 +106,7 @@ export async function getUserRole(userId: string): Promise<string | null> {
         const result = await pool.query(`
             SELECT role
             FROM users
-            WHERE user_id = $1;
+            WHERE id = $1;
         `, [userId]);
 
         if (result.rows.length === 0) {
@@ -144,12 +144,15 @@ export async function addUser(userId: string, username: string, email: string, n
     }
 }
 
-// ============================================
-// DELETE USER
-// ============================================
-
+/**
+ * Delete a user by their user_id (string format: "user:username")
+ * @param userId - The user_id string (e.g., "user:john")
+ * @returns The deleted user record
+ */
 export async function deleteUser(userId: string) {
     try {
+        console.log(`🗑️  Deleting user from database: ${userId}`);
+
         // Prevent deletion of default users
         const protectedUsers = ['user:tharsan', 'user:admin'];
         if (protectedUsers.includes(userId)) {
@@ -163,9 +166,10 @@ export async function deleteUser(userId: string) {
         `, [userId]);
 
         if (result.rows.length === 0) {
-            throw new Error('User not found');
+            throw new Error(`User ${userId} not found`);
         }
 
+        console.log(`✅ User deleted from database:`, result.rows[0].username);
         return result.rows[0];
     } catch (error) {
         console.error('❌ Error deleting user:', error);

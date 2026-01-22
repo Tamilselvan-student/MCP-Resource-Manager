@@ -56,7 +56,7 @@ export async function authenticateToken(req, res, next) {
                 created_at,
                 updated_at
             FROM users
-            WHERE user_id = $1 AND is_active = true
+            WHERE id = $1 AND is_active = true
         `, [payload.userId]);
         if (result.rows.length === 0) {
             res.status(403).json({
