@@ -106,7 +106,7 @@ export async function getUserRole(userId: string): Promise<string | null> {
         const result = await pool.query(`
             SELECT role
             FROM users
-            WHERE id = $1;
+            WHERE user_id = $1;
         `, [userId]);
 
         if (result.rows.length === 0) {
