@@ -474,29 +474,12 @@ app.post('/api/admin/users', async (req, res) => {
         };
         const relation = roleToRelation[role] || role;
         // Grant OpenFGA permissions based on role
-        const allResourceTypes = ['file', 'appointment', 'project', 'expense', 'task', 'customer'];
-        // Viewers get NO default access, editors and admins get all
-        const resourceTypes = role === 'viewer' ? [] : allResourceTypes;
-        const writes = resourceTypes.map(type => ({
-            user: userId,
-            relation: relation,
-            object: `resource:${type}_*`
-        }));
-        // Only call OpenFGA if there are tuples to write
-        if (writes.length > 0) {
-            const response = await fetch(`${process.env.FGA_API_URL}/stores/${process.env.FGA_STORE_ID}/write`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ writes: { tuple_keys: writes } })
-            });
-            if (!response.ok) {
-                const error = await response.json();
-                // Rollback database insert if OpenFGA fails
-                await deleteUser(userId);
-                return res.json({ success: false, error: error.message || 'Failed to create user' });
-            }
-        }
-        console.log(`✅ Created user: ${username} (${email}) with role: ${role} (OpenFGA relation: ${relation}, resources: ${resourceTypes.join(', ') || 'none'})`);
+        // NEW DESIGN (Granular): 
+        // - We do NOT grant wildcard tuples anymore (FGA doesn't support them well here).
+        // - Admins are handled via "Super User" checks in code.
+        // - Viewers/Editors start with NO access and gain it via creation/sharing.
+        console.log(`✅ User ${role} created. Granular access model active.`);
+        console.log(`✅ Created user: ${username} (${email}) with role: ${role} (OpenFGA relation: ${relation})`);
         return res.json({ success: true, message: `User ${username} created with ${role} permissions` });
     }
     catch (error) {
@@ -529,11 +512,11 @@ app.delete('/api/admin/users/:userId', async (req, res) => {
         // Delete from database first (includes protection for default users)
         await deleteUser(userId);
         // Delete ALL OpenFGA tuples for this user
-        const resourceTypes = ['file', 'appointment', 'project', 'expense', 'task', 'customer'];
+        const allResourceTypes = ['file', 'appointment', 'project', 'expense', 'task', 'customer', 'miscellaneous'];
         const allRelations = ['viewer', 'editor', 'owner']; // All OpenFGA relations
         // Build all tuple deletions
         const tuplesToDelete = [];
-        for (const resourceType of resourceTypes) {
+        for (const resourceType of allResourceTypes) {
             for (const relation of allRelations) {
                 tuplesToDelete.push({
                     user: userId,
@@ -608,39 +591,21 @@ app.patch('/api/admin/users/:userId/role', async (req, res) => {
         const oldRelation = roleToRelation[currentRole];
         const newRelation = roleToRelation[newRole];
         // Delete old wildcard tuples and create new ones
-        const allResourceTypes = ['file', 'appointment', 'project', 'expense', 'task', 'customer'];
+        const allResourceTypes = ['file', 'appointment', 'project', 'expense', 'task', 'customer', 'miscellaneous'];
         // Determine resource types for old and new roles
-        const oldResourceTypes = currentRole === 'viewer' ? [] : allResourceTypes;
-        const newResourceTypes = newRole === 'viewer' ? [] : allResourceTypes;
+        // Determine resource types for old and new roles
+        // NEW DESIGN: Only Admin gets wildcards. Editor/Viewer get NONE.
+        const oldResourceTypes = (currentRole === 'admin') ? allResourceTypes : [];
+        const newResourceTypes = (newRole === 'admin') ? allResourceTypes : [];
         const deleteTuples = oldResourceTypes.map(type => ({
             user: userId,
-            relation: oldRelation,
+            relation: 'owner', // Assuming admins had owner relation
             object: `resource:${type}_*`
         }));
-        const createTuples = newResourceTypes.map(type => ({
-            user: userId,
-            relation: newRelation,
-            object: `resource:${type}_*`
-        }));
-        // Only call OpenFGA if there are tuples to write or delete
-        if (createTuples.length > 0 || deleteTuples.length > 0) {
-            const requestBody = {};
-            if (createTuples.length > 0) {
-                requestBody.writes = { tuple_keys: createTuples };
-            }
-            if (deleteTuples.length > 0) {
-                requestBody.deletes = { tuple_keys: deleteTuples };
-            }
-            const response = await fetch(`${process.env.FGA_API_URL}/stores/${process.env.FGA_STORE_ID}/write`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(requestBody)
-            });
-            if (!response.ok) {
-                const error = await response.json();
-                return res.json({ success: false, error: error.message || 'Failed to update role' });
-            }
-        }
+        // NEW DESIGN (Granular):
+        // - Role changes just update the DB role.
+        // - We do NOT need to add/remove wildcard tuples because we stopped using them.
+        console.log(`✅ Role changed to ${newRole}. Access permissions updated via DB role.`);
         // Update database (use user_id not id - userId is a string like "user:watersheep")
         await pool.query('UPDATE users SET role = $1, updated_at = NOW() WHERE user_id = $2', [newRole, userId]);
         console.log(`✅ Changed ${userId} role: ${currentRole} → ${newRole} (OpenFGA: ${oldRelation} → ${newRelation}, resources: ${newResourceTypes.join(', ') || 'none'})`);
@@ -695,6 +660,38 @@ app.post('/api/resources', authenticateToken, async (req, res) => {
         ]);
         const newResource = result.rows[0];
         console.log(`✅ Resource created: ${data.name || resource_type} (${resource_type}) by ${req.user.username}`);
+        // ==========================================
+        // OPENFGA: GRANT OWNER ACCESS TO CREATOR
+        // ==========================================
+        try {
+            const documentId = `resource:${resource_type}:${newResource.id}`;
+            const userId = req.user.user_id;
+            console.log(`🔐 Granting owner access for ${documentId} to ${userId}`);
+            const response = await fetch(`${process.env.FGA_API_URL}/stores/${process.env.FGA_STORE_ID}/write`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    writes: {
+                        tuple_keys: [{
+                                user: userId,
+                                relation: 'owner',
+                                object: documentId
+                            }]
+                    }
+                })
+            });
+            if (!response.ok) {
+                const fgaError = await response.json();
+                console.error('❌ OpenFGA Error granting owner access:', fgaError);
+                // Note: We don't rollback the db insert here to avoid complexity, but in production we should.
+            }
+            else {
+                console.log('✅ OpenFGA tuple written successfully');
+            }
+        }
+        catch (fgaErr) {
+            console.error('❌ Failed to write OpenFGA tuple:', fgaErr);
+        }
         return res.json({
             success: true,
             resource: newResource,
@@ -741,16 +738,24 @@ app.get('/api/resources', authenticateToken, async (req, res) => {
             params.push(type);
             query += ` AND resource_type = $${params.length}`;
         }
-        // Filter by visibility based on user role (except owner/admin who see all)
+        // GRANULAR ACCESS CHECK WITH SHARED VISIBILITY
+        // If not Admin/Owner, show resources that are:
+        // 1. Created by the user (Ownership)
+        // 2. OR explicitly marked visible to their role (Shared/Public)
         if (userRole !== 'owner' && userRole !== 'admin') {
             const visibilityColumn = `visible_to_${userRole}`;
-            query += ` AND ${visibilityColumn} = true`;
+            // Add user_id to params
+            params.push(req.user.user_id);
+            const userIdParamIndex = params.length;
+            query += ` AND (created_by = $${userIdParamIndex} OR ${visibilityColumn} = true)`;
         }
         query += ' ORDER BY created_at DESC';
         const result = await pool.query(query, params);
-        // Get all users with wildcard permissions
+        // Get only Admins/Owners for wildcard display
         const users = await getUsers();
-        const wildcardAccess = users.map(u => ({
+        const wildcardAccess = users
+            .filter(u => u.role === 'admin' || u.role === 'owner')
+            .map(u => ({
             user_id: u.user_id,
             username: u.username,
             role: u.role
@@ -758,7 +763,7 @@ app.get('/api/resources', authenticateToken, async (req, res) => {
         return res.json({
             success: true,
             data: result.rows,
-            wildcardAccess // Show who has wildcard access
+            wildcardAccess // Only Admins/Owners shown here now
         });
     }
     catch (error) {

@@ -124,6 +124,11 @@ async function executeChangeRole(command, executorId) {
         // This ensures role change persists even if OpenFGA fails
         await client.query('COMMIT');
         console.log('✅ Database transaction committed');
+        // ✅ DEBUG: Verify immediately after commit
+        const verify1 = await pool.query('SELECT role FROM users WHERE user_id = $1', [targetUser.user_id]);
+        console.log('🔍 DEBUG - DB role immediately after COMMIT:', verify1.rows[0]?.role);
+        console.log('🔍 DEBUG - Expected role:', newRole);
+        console.log('🔍 DEBUG - Match?', verify1.rows[0]?.role === newRole);
         // Update OpenFGA permissions (optional - may fail if OpenFGA is not configured)
         // This is done AFTER commit so failures don't rollback the database change
         try {
@@ -137,21 +142,27 @@ async function executeChangeRole(command, executorId) {
             };
             const allResourceTypes = ['file', 'appointment', 'project', 'expense', 'task', 'customer'];
             const allPossibleRoles = ['owner', 'admin', 'editor']; // Roles that have wildcard tuples
-            // Build delete list for ALL possible roles (except viewer)
-            // This ensures we clean up orphaned tuples even when DB and OpenFGA disagree
-            const deleteTuples = [];
+            // ✅ Use a Map to prevent duplicates (owner and admin both map to 'owner' relation)
+            const deleteTuplesMap = new Map();
             for (const role of allPossibleRoles) {
                 const relation = roleToRelation[role];
                 for (const type of allResourceTypes) {
-                    deleteTuples.push({
-                        user: targetUser.user_id,
-                        relation: relation,
-                        object: `resource:${type}_*`
-                    });
+                    // Create unique key: relation + object
+                    const key = `${relation}:${type}`;
+                    // Only add if not already in map (prevents duplicates)
+                    if (!deleteTuplesMap.has(key)) {
+                        deleteTuplesMap.set(key, {
+                            user: targetUser.user_id,
+                            relation: relation,
+                            object: `resource:${type}_*`
+                        });
+                    }
                 }
             }
-            console.log(`🗑️  Will delete ALL possible tuples (${deleteTuples.length} total)`);
-            console.log(`   This includes: owner, admin (→owner), and editor tuples for all resource types`);
+            // Convert Map to Array
+            const deleteTuples = Array.from(deleteTuplesMap.values());
+            console.log(`🗑️  Will delete ${deleteTuples.length} UNIQUE tuples (duplicates removed)`);
+            console.log(`   This includes: owner and editor tuples for all resource types`);
             // Calculate NEW tuples for target role
             const newRelation = roleToRelation[newRole];
             const newResourceTypes = newRole === 'viewer' ? [] : allResourceTypes;
@@ -190,7 +201,17 @@ async function executeChangeRole(command, executorId) {
             // OpenFGA update failed, but continue with role change
             console.error('⚠️  OpenFGA permission update failed:', fgaError.message);
             console.log('⚠️  Role change will proceed without OpenFGA sync');
+            // ✅ DEBUG: Verify after OpenFGA error
+            const verify2 = await pool.query('SELECT role FROM users WHERE user_id = $1', [targetUser.user_id]);
+            console.log('🔍 DEBUG - DB role after OpenFGA error:', verify2.rows[0]?.role);
+            console.log('🔍 DEBUG - Expected role:', newRole);
+            console.log('🔍 DEBUG - Match?', verify2.rows[0]?.role === newRole);
         }
+        // ✅ DEBUG: Final verification before return
+        const verify3 = await pool.query('SELECT role FROM users WHERE user_id = $1', [targetUser.user_id]);
+        console.log('🔍 DEBUG - DB role at final return:', verify3.rows[0]?.role);
+        console.log('🔍 DEBUG - Expected role:', newRole);
+        console.log('🔍 DEBUG - Match?', verify3.rows[0]?.role === newRole);
         return {
             success: true,
             message: `✅ ${targetUser.username} is now ${newRole}. Role updated successfully.`,
@@ -202,6 +223,8 @@ async function executeChangeRole(command, executorId) {
         };
     }
     catch (error) {
+        console.log('🚨 DEBUG - OUTER CATCH TRIGGERED - This would cause ROLLBACK');
+        console.log('🚨 DEBUG - Error that triggered rollback:', error.message);
         await client.query('ROLLBACK');
         console.error('Error changing role:', error);
         return {
@@ -978,6 +1001,186 @@ async function executeDeleteResource(command, executorId) {
     }
 }
 /**
+ * Change resource category (move between categories)
+ */
+async function executeChangeCategory(command, executorId) {
+    const { resource: resourceName, newCategory, oldCategory } = command.entities;
+    console.log('📦 CHANGE_CATEGORY - entities:', command.entities);
+    if (!resourceName) {
+        return {
+            success: false,
+            message: '❌ Please specify which resource to move.\n\n**Example:** "move report.pdf to Projects"',
+            error: 'Missing resource name'
+        };
+    }
+    if (!newCategory) {
+        return {
+            success: false,
+            message: '❌ Please specify the target category.\n\n**Example:** "move report.pdf to Projects"',
+            error: 'Missing target category'
+        };
+    }
+    try {
+        // Import smart matchers
+        const { matchCategory, formatCategoryList } = await import('./smart-matchers.js');
+        // Validate new category
+        const matchedNewCategory = matchCategory(newCategory);
+        if (!matchedNewCategory) {
+            return {
+                success: false,
+                message: `❌ "${newCategory}" is not a valid category.\n\nValid categories:\n${formatCategoryList()}`,
+                error: 'Invalid category'
+            };
+        }
+        // Find the resource
+        const resourceResult = await pool.query(`SELECT id, data, resource_type 
+             FROM resources 
+             WHERE LOWER(data->>'name') = LOWER($1)
+             LIMIT 1`, [resourceName]);
+        if (resourceResult.rowCount === 0) {
+            return {
+                success: false,
+                message: `❌ Resource **${resourceName}** not found.\n\n💡 Use \`list resources\` to see all resources.`,
+                error: 'Resource not found'
+            };
+        }
+        const resource = resourceResult.rows[0];
+        const currentCategory = resource.data?.category || resource.resource_type;
+        // Check if already in target category
+        if (currentCategory.toLowerCase() === matchedNewCategory.toLowerCase()) {
+            return {
+                success: true,
+                message: `✅ **${resourceName}** is already in **${matchedNewCategory}** category.`,
+                data: {
+                    resource: resourceName,
+                    category: matchedNewCategory,
+                    unchanged: true
+                }
+            };
+        }
+        // Check for duplicate name in target category
+        const duplicateCheck = await pool.query(`SELECT data->>'name' as name 
+             FROM resources 
+             WHERE LOWER(data->>'name') = LOWER($1) 
+             AND LOWER(data->>'category') = LOWER($2)
+             LIMIT 1`, [resourceName, matchedNewCategory]);
+        if (duplicateCheck.rowCount && duplicateCheck.rowCount > 0) {
+            return {
+                success: false,
+                message: `❌ A file named **${resourceName}** already exists in **${matchedNewCategory}**.\n\n` +
+                    `💡 Please rename the file first, or delete the existing one.`,
+                error: 'Duplicate resource name in target category'
+            };
+        }
+        // Update the category
+        const updatedData = {
+            ...resource.data,
+            category: matchedNewCategory
+        };
+        await pool.query(`UPDATE resources 
+             SET data = $1, 
+                 resource_type = $2,
+                 updated_at = NOW() 
+             WHERE id = $3`, [JSON.stringify(updatedData), matchedNewCategory.toLowerCase(), resource.id]);
+        console.log(`✅ Moved ${resourceName} from ${currentCategory} to ${matchedNewCategory}`);
+        return {
+            success: true,
+            message: `✅ Moved **${resourceName}** from **${currentCategory}** to **${matchedNewCategory}**!`,
+            data: {
+                resource: resourceName,
+                oldCategory: currentCategory,
+                newCategory: matchedNewCategory
+            }
+        };
+    }
+    catch (error) {
+        console.error('Error changing category:', error);
+        return {
+            success: false,
+            message: `❌ Failed to move resource: ${error.message}`,
+            error: error.message
+        };
+    }
+}
+/**
+ * Rename a resource
+ */
+async function executeRenameResource(command, executorId) {
+    const { resource: oldName, newName } = command.entities;
+    console.log('✏️ RENAME_RESOURCE - entities:', command.entities);
+    if (!oldName) {
+        return {
+            success: false,
+            message: '❌ Please specify which resource to rename.\n\n**Example:** "rename report.pdf to budget.pdf"',
+            error: 'Missing resource name'
+        };
+    }
+    if (!newName) {
+        return {
+            success: false,
+            message: '❌ Please specify the new name.\n\n**Example:** "rename report.pdf to budget.pdf"',
+            error: 'Missing new name'
+        };
+    }
+    try {
+        // Find the resource
+        const resourceResult = await pool.query(`SELECT id, data, resource_type 
+             FROM resources 
+             WHERE LOWER(data->>'name') = LOWER($1)
+             LIMIT 1`, [oldName]);
+        if (resourceResult.rowCount === 0) {
+            return {
+                success: false,
+                message: `❌ Resource **${oldName}** not found.\n\n💡 Use \`list resources\` to see all resources.`,
+                error: 'Resource not found'
+            };
+        }
+        const resource = resourceResult.rows[0];
+        const category = resource.data?.category || resource.resource_type;
+        // Check for duplicate name in same category
+        const duplicateCheck = await pool.query(`SELECT data->>'name' as name 
+             FROM resources 
+             WHERE LOWER(data->>'name') = LOWER($1) 
+             AND LOWER(data->>'category') = LOWER($2)
+             AND id != $3
+             LIMIT 1`, [newName, category, resource.id]);
+        if (duplicateCheck.rowCount && duplicateCheck.rowCount > 0) {
+            return {
+                success: false,
+                message: `❌ A file named **${newName}** already exists in **${category}**.\n\n` +
+                    `💡 Please choose a different name.`,
+                error: 'Duplicate name'
+            };
+        }
+        // Update the name
+        const updatedData = {
+            ...resource.data,
+            name: newName
+        };
+        await pool.query(`UPDATE resources 
+             SET data = $1,
+                 updated_at = NOW() 
+             WHERE id = $2`, [JSON.stringify(updatedData), resource.id]);
+        return {
+            success: true,
+            message: `✅ Renamed **${oldName}** to **${newName}** in **${category}**!`,
+            data: {
+                oldName,
+                newName,
+                category
+            }
+        };
+    }
+    catch (error) {
+        console.error('Error renaming resource:', error);
+        return {
+            success: false,
+            message: `❌ Failed to rename resource: ${error.message}`,
+            error: error.message
+        };
+    }
+}
+/**
  * Get system statistics
  */
 async function executeSystemStats(command, executorId) {
@@ -1258,6 +1461,10 @@ export async function executeCommand(command, executorId) {
             return executeCreateResource(command, executorId);
         case 'delete_resource':
             return executeDeleteResource(command, executorId);
+        case 'change_category':
+            return executeChangeCategory(command, executorId);
+        case 'rename_resource':
+            return executeRenameResource(command, executorId);
         case 'list_categories':
             return {
                 success: true,

@@ -49,7 +49,7 @@ export type IntentType =
     | 'user_password_status'
     // Resource Management Intents
     | 'list_resources' | 'list_categories' | 'check_access' | 'create_resource'
-    | 'delete_resource' | 'update_visibility' | 'bulk_visibility' | 'category_stats'
+    | 'delete_resource' | 'change_category' | 'rename_resource' | 'update_visibility' | 'bulk_visibility' | 'category_stats'
     // Enhanced Resource Queries
     | 'resource_creation_date' | 'resource_creator' | 'resource_details'
     // Filtered Lists
@@ -68,6 +68,9 @@ export interface ParsedCommand {
         newRole?: string;
         resource?: string;
         category?: string;
+        oldCategory?: string;
+        newCategory?: string;
+        newName?: string;
         email?: string;
         name?: string;
         query?: string;  // For category_stats queries

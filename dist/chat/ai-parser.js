@@ -31,12 +31,19 @@ USER MANAGEMENT:
 RESOURCE MANAGEMENT:
 - create_resource: Create file/appointment/project/task/expense/customer
 - delete_resource: Delete file/resource (DEFAULT for delete without "user")
+- rename_resource: Rename a resource
+- change_category: Move resource to different category
 - list_resources: List/show resources/files
 - list_categories: Show/list categories/options
 - check_access: Who has access, what files does X access
 - update_visibility: Make file visible/hidden to role
 - bulk_visibility: Make all files in category visible to role
 - category_stats: How many files in category
+
+SYSTEM INFORMATION:
+- system_stats: Show system statistics (user counts, resource counts)
+- who_am_i: Get current user info
+- help: Show help
 
 OTHER:
 - unknown: Unrecognized command
@@ -83,10 +90,13 @@ OTHER:
   "entities": {
     "user": "<username>",
     "resource": "<filename>",
+    "newName": "<new filename for rename_resource>",
     "email": "<email>",
     "role": "<role for filtering>",
     "newRole": "<new role for change_role>",
     "category": "<Files|Appointments|Projects|etc>",
+    "oldCategory": "<source category for change_category>",
+    "newCategory": "<target category for change_category>",
     "query": "<query string>",
     "visibility": {
       "role": "<viewer|editor|admin|owner>",
@@ -139,6 +149,27 @@ OTHER:
 
 "display all categories"
 → {"intent":"list_categories","entities":{},"confidence":0.95}
+
+"move file report.pdf from Files to Projects"
+→ {"intent":"change_category","entities":{"resource":"report.pdf","oldCategory":"Files","newCategory":"Projects"},"confidence":0.95}
+
+"change category of meeting.txt to Appointments"
+→ {"intent":"change_category","entities":{"resource":"meeting.txt","newCategory":"Appointments"},"confidence":0.90}
+
+"move budget.xlsx to Projects"
+→ {"intent":"change_category","entities":{"resource":"budget.xlsx","newCategory":"Projects"},"confidence":0.90}
+
+"rename file report.pdf to budget.pdf"
+→ {"intent":"rename_resource","entities":{"resource":"report.pdf","newName":"budget.pdf"},"confidence":0.95}
+
+"change name of meeting.txt to notes.txt"
+→ {"intent":"rename_resource","entities":{"resource":"meeting.txt","newName":"notes.txt"},"confidence":0.90}
+
+"show system stats"
+→ {"intent":"system_stats","entities":{},"confidence":0.95}
+
+"how many users"
+→ {"intent":"system_stats","entities":{},"confidence":0.90}
 
 **RULES:**
 - Only include entities that exist in the command
