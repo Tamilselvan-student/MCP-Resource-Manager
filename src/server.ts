@@ -525,13 +525,45 @@ app.post('/api/admin/users', async (req: Request, res: Response) => {
 
         // Grant OpenFGA permissions based on role
         // NEW DESIGN (Granular): 
-        // - We do NOT grant wildcard tuples anymore (FGA doesn't support them well here).
-        // - Admins are handled via "Super User" checks in code.
-        // - Viewers/Editors start with NO access and gain it via creation/sharing.
+        // - We do NOT grant wildcard tuples anymore.
+        // - Admins are handled via "Super User" checks.
+        // - Viewers/Editors are added to their respective FGA Groups.
 
         console.log(`✅ User ${role} created. Granular access model active.`);
-
         console.log(`✅ Created user: ${username} (${email}) with role: ${role} (OpenFGA relation: ${relation})`);
+
+        // ==========================================
+        // AUTO-GROUP JOIN: Add User to Group
+        // ==========================================
+        if (role === 'viewer' || role === 'editor') {
+            const groupName = `${role}s`; // viewers or editors
+            const groupUser = `user:${userId}`; // Ensure format
+
+            try {
+                console.log(`✨ Adding ${groupUser} to group:${groupName}...`);
+                const fgaRes = await fetch(`${process.env.FGA_API_URL}/stores/${process.env.FGA_STORE_ID}/write`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        writes: {
+                            tuple_keys: [{
+                                user: groupUser,
+                                relation: 'member',
+                                object: `group:${groupName}`
+                            }]
+                        }
+                    })
+                });
+
+                if (!fgaRes.ok) {
+                    console.error('❌ Failed to add user to group:', await fgaRes.text());
+                } else {
+                    console.log(`✅ User added to group:${groupName}`);
+                }
+            } catch (err) {
+                console.error('❌ Error writing group tuple:', err);
+            }
+        }
 
         return res.json({ success: true, message: `User ${username} created with ${role} permissions` });
     } catch (error: any) {
@@ -568,36 +600,48 @@ app.delete('/api/admin/users/:userId', async (req: Request, res: Response) => {
         // Delete from database first (includes protection for default users)
         await deleteUser(userId);
 
-        // Delete ALL OpenFGA tuples for this user
-        const allResourceTypes = ['file', 'appointment', 'project', 'expense', 'task', 'customer', 'miscellaneous'];
-        const allRelations = ['viewer', 'editor', 'owner']; // All OpenFGA relations
+        // ==========================================
+        // AUTO-CLEANUP: Delete all FGA tuples for this user
+        // ==========================================
+        try {
+            const userFgaId = `user:${userId}`;
+            console.log(`🧹 Cleaning up FGA tuples for ${userFgaId}...`);
 
-        // Build all tuple deletions
-        const tuplesToDelete = [];
-        for (const resourceType of allResourceTypes) {
-            for (const relation of allRelations) {
-                tuplesToDelete.push({
-                    user: userId,
-                    relation: relation,
-                    object: `resource:${resourceType}_*`
-                });
+            // Read all tuples where user is the user
+            // Note: This relies on the ability to list by user.
+            const response = await fetch(`${process.env.FGA_API_URL}/stores/${process.env.FGA_STORE_ID}/read`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    tuple_key: { user: userFgaId }
+                })
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                const tuples = data.tuples || [];
+
+                if (tuples.length > 0) {
+                    const deletes = tuples.map((t: any) => t.key);
+
+                    // Delete in batches (naive, assuming < 20 usually)
+                    const deleteRes = await fetch(`${process.env.FGA_API_URL}/stores/${process.env.FGA_STORE_ID}/write`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ deletes: { tuple_keys: deletes } })
+                    });
+
+                    if (deleteRes.ok) console.log(`✅ Deleted ${tuples.length} orphaned tuples.`);
+                    else console.warn('⚠️ Failed to delete orphaned tuples:', await deleteRes.text());
+                } else {
+                    console.log('ℹ️ No FGA tuples found for user.');
+                }
             }
+        } catch (cleanupErr) {
+            console.error('❌ Error cleaning up FGA tuples:', cleanupErr);
         }
 
-        // Delete all tuples in one API call
-        const response = await fetch(`${process.env.FGA_API_URL}/stores/${process.env.FGA_STORE_ID}/write`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                deletes: { tuple_keys: tuplesToDelete }
-            })
-        });
-
-        if (!response.ok) {
-            console.warn('Warning: Failed to delete some OpenFGA tuples');
-        }
-
-        console.log(`✅ Deleted user and all tuples: ${userId}`);
+        console.log(`✅ Deleted user: ${userId}`);
 
         return res.json({ success: true, message: `User ${userId} deleted and permissions revoked` });
     } catch (error: any) {
@@ -684,10 +728,51 @@ app.patch('/api/admin/users/:userId/role', async (req: Request, res: Response) =
         // - We do NOT need to add/remove wildcard tuples because we stopped using them.
         console.log(`✅ Role changed to ${newRole}. Access permissions updated via DB role.`);
 
+        // ==========================================
+        // AUTO-GROUP SWAP: Update Group Membership
+        // ==========================================
+        try {
+            const writes: any[] = [];
+            const deletes: any[] = [];
+            const userFgaId = `user:${userId}`;
+
+            // Remove from OLD group
+            if (currentRole === 'viewer' || currentRole === 'editor') {
+                deletes.push({
+                    user: userFgaId,
+                    relation: 'member',
+                    object: `group:${currentRole}s`
+                });
+            }
+
+            // Add to NEW group
+            if (newRole === 'viewer' || newRole === 'editor') {
+                writes.push({
+                    user: userFgaId,
+                    relation: 'member',
+                    object: `group:${newRole}s`
+                });
+            }
+
+            if (writes.length > 0 || deletes.length > 0) {
+                console.log(`✨ Updating groups for ${userFgaId}: -${currentRole}s +${newRole}s`);
+                const swapRes = await fetch(`${process.env.FGA_API_URL}/stores/${process.env.FGA_STORE_ID}/write`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        writes: writes.length ? { tuple_keys: writes } : undefined,
+                        deletes: deletes.length ? { tuple_keys: deletes } : undefined
+                    })
+                });
+
+                if (!swapRes.ok) { console.error('❌ Failed to swap groups:', await swapRes.text()); }
+            }
+        } catch (e) { console.error('❌ Group swap error:', e); }
+
         // Update database (use user_id not id - userId is a string like "user:watersheep")
         await pool.query('UPDATE users SET role = $1, updated_at = NOW() WHERE user_id = $2', [newRole, userId]);
 
-        console.log(`✅ Changed ${userId} role: ${currentRole} → ${newRole} (OpenFGA: ${oldRelation} → ${newRelation}, resources: ${newResourceTypes.join(', ') || 'none'})`);
+        console.log(`✅ Changed ${userId} role: ${currentRole} → ${newRole} (OpenFGA groups updated)`);
         return res.json({ success: true, message: `Role updated to ${newRole}` });
     } catch (error: any) {
         console.error('Error changing user role:', error);
@@ -749,9 +834,9 @@ app.post('/api/resources', authenticateToken, async (req: AuthRequest, res: Resp
 
         // ==========================================
         // OPENFGA: GRANT OWNER ACCESS TO CREATOR
-        // ==========================================
         try {
-            const documentId = `resource:${resource_type}:${newResource.id}`;
+            // Protocol Format: resource:uuid (Matches Architect's Directive)
+            const documentId = `resource:${newResource.id}`;
             const userId = req.user!.user_id;
 
             console.log(`🔐 Granting owner access for ${documentId} to ${userId}`);
@@ -777,6 +862,33 @@ app.post('/api/resources', authenticateToken, async (req: AuthRequest, res: Resp
             } else {
                 console.log('✅ OpenFGA tuple written successfully');
             }
+
+            // ==========================================
+            // AUTO-GROUP SHARE: Share with Viewers
+            // ==========================================
+            if (visible_to_viewer) {
+                console.log(`✨ Sharing ${documentId} with group:viewers...`);
+                const shareRes = await fetch(`${process.env.FGA_API_URL}/stores/${process.env.FGA_STORE_ID}/write`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        writes: {
+                            tuple_keys: [{
+                                user: 'group:viewers#member',
+                                relation: 'viewer',
+                                object: documentId
+                            }]
+                        }
+                    })
+                });
+
+                if (!shareRes.ok) {
+                    console.error('❌ Failed to share with group:viewers:', await shareRes.text());
+                } else {
+                    console.log('✅ Shared with group:viewers');
+                }
+            }
+
         } catch (fgaErr) {
             console.error('❌ Failed to write OpenFGA tuple:', fgaErr);
         }
@@ -835,24 +947,31 @@ app.get('/api/resources', authenticateToken, async (req: AuthRequest, res: Respo
             query += ` AND resource_type = $${params.length}`;
         }
 
-        // GRANULAR ACCESS CHECK WITH SHARED VISIBILITY
-        // If not Admin/Owner, show resources that are:
-        // 1. Created by the user (Ownership)
-        // 2. OR explicitly marked visible to their role (Shared/Public)
-
-        if (userRole !== 'owner' && userRole !== 'admin') {
-            const visibilityColumn = `visible_to_${userRole}`;
-
-            // Add user_id to params
-            params.push(req.user!.user_id);
-            const userIdParamIndex = params.length;
-
-            query += ` AND (created_by = $${userIdParamIndex} OR ${visibilityColumn} = true)`;
-        }
-
+        // GRANULAR ACCESS CHECK via FGA Batch (Pure Model)
+        // 1. Fetch ALL resources (or pre-filter if optimized)
         query += ' ORDER BY created_at DESC';
-
         const result = await pool.query(query, params);
+
+        // 2. Filter using OpenFGA checks in parallel
+
+        const resourcesToCheck = result.rows;
+        let authorizedResources: any[] = [];
+
+        if (userRole === 'admin' || userRole === 'owner') {
+            // Super-user bypass
+            authorizedResources = resourcesToCheck;
+        } else {
+            // Batch check with OpenFGA
+            const checkRequests = resourcesToCheck.map(r => ({
+                userId: req.user!.user_id,
+                relation: 'viewer',
+                object: `resource:${r.id}`
+            }));
+
+            // Execute batch check
+            const results = await mcpHandler.batchCheck(checkRequests);
+            authorizedResources = resourcesToCheck.filter((_, index) => results[index]);
+        }
 
         // Get only Admins/Owners for wildcard display
         const users = await getUsers();
@@ -866,8 +985,8 @@ app.get('/api/resources', authenticateToken, async (req: AuthRequest, res: Respo
 
         return res.json({
             success: true,
-            data: result.rows,
-            wildcardAccess  // Only Admins/Owners shown here now
+            data: authorizedResources,
+            wildcardAccess
         });
     } catch (error: any) {
         console.error('Error fetching resources:', error);

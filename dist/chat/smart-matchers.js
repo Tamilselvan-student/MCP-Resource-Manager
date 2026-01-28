@@ -12,7 +12,7 @@ export const VALID_CATEGORIES = [
     'customer',
     'expense',
     'task',
-    'misc'
+    'Miscellaneous'
 ];
 /**
  * Valid user roles
@@ -28,7 +28,7 @@ const CATEGORY_KEYWORDS = {
     'customer': ['customer', 'customers', 'client', 'clients', 'contact', 'contacts'],
     'expense': ['expense', 'expenses', 'cost', 'costs', 'payment', 'payments', 'money'],
     'task': ['task', 'tasks', 'todo', 'todos', 'action', 'actions'],
-    'misc': ['misc', 'miscellaneous', 'other', 'general', 'various']
+    'Miscellaneous': ['misc', 'miscellaneous', 'other', 'general', 'various']
 };
 /**
  * Match user input to a valid category
@@ -120,7 +120,7 @@ export function formatCategoryList() {
         'customer': '👥 Customers',
         'expense': '💰 Expenses',
         'task': '✅ Tasks',
-        'misc': '📦 Miscellaneous'
+        'Miscellaneous': '📦 Miscellaneous'
     };
     return VALID_CATEGORIES.map((cat, i) => `${i + 1}. ${categoryDisplay[cat]}`).join('\n');
 }

@@ -184,97 +184,22 @@ async function executeChangeRole(
         // Update OpenFGA permissions (optional - may fail if OpenFGA is not configured)
         // This is done AFTER commit so failures don't rollback the database change
         try {
+            console.log('OpenFGA: No longer using wildcard permissions. Access is granted per-resource.');
+            /* 
+            // PREVIOUS WILDCARD LOGIC - DISABLED FOR FILE-LEVEL PERMISSIONS
             console.log('\n🧹 CLEANING ALL POSSIBLE OLD TUPLES (database-agnostic approach)');
-            console.log('   This ensures OpenFGA is cleaned even when DB and OpenFGA are out of sync');
-
-            const roleToRelation: { [key: string]: string } = {
-                'owner': 'owner',
-                'admin': 'owner',  // admin maps to owner in OpenFGA
-                'editor': 'editor',
-                'viewer': 'viewer'
-            };
-
-            const allResourceTypes = ['file', 'appointment', 'project', 'expense', 'task', 'customer'];
-            const allPossibleRoles = ['owner', 'admin', 'editor'];  // Roles that have wildcard tuples
-
-            // ✅ Use a Map to prevent duplicates (owner and admin both map to 'owner' relation)
-            const deleteTuplesMap = new Map<string, any>();
-
-            for (const role of allPossibleRoles) {
-                const relation = roleToRelation[role];
-
-                for (const type of allResourceTypes) {
-                    // Create unique key: relation + object
-                    const key = `${relation}:${type}`;
-
-                    // Only add if not already in map (prevents duplicates)
-                    if (!deleteTuplesMap.has(key)) {
-                        deleteTuplesMap.set(key, {
-                            user: targetUser.user_id,
-                            relation: relation,
-                            object: `resource:${type}_*`
-                        });
-                    }
-                }
-            }
-
-            // Convert Map to Array
-            const deleteTuples = Array.from(deleteTuplesMap.values());
-
-            console.log(`🗑️  Will delete ${deleteTuples.length} UNIQUE tuples (duplicates removed)`);
-            console.log(`   This includes: owner and editor tuples for all resource types`);
-
-            // Calculate NEW tuples for target role
-            const newRelation = roleToRelation[newRole];
-            const newResourceTypes = newRole === 'viewer' ? [] : allResourceTypes;
-
-            const createTuples = newResourceTypes.map(type => ({
-                user: targetUser.user_id,
-                relation: newRelation,
-                object: `resource:${type}_*`
-            }));
-
-            console.log(`🗑️  Old tuples to DELETE (${deleteTuples.length}):`, JSON.stringify(deleteTuples, null, 2));
-            console.log(`📝 New tuples to CREATE (${createTuples.length}):`, JSON.stringify(createTuples, null, 2));
-
-            if (createTuples.length > 0 || deleteTuples.length > 0) {
-                const requestBody: any = {};
-                if (createTuples.length > 0) {
-                    requestBody.writes = { tuple_keys: createTuples };
-                    console.log(`✅ Adding ${createTuples.length} tuples to WRITES`);
-                }
-                if (deleteTuples.length > 0) {
-                    requestBody.deletes = { tuple_keys: deleteTuples };
-                    console.log(`✅ Adding ${deleteTuples.length} tuples to DELETES`);
-                }
-
-                console.log('🔐 Updating OpenFGA permissions:', JSON.stringify(requestBody, null, 2));
-
-                const response = await fetch(`${process.env.FGA_API_URL}/stores/${process.env.FGA_STORE_ID}/write`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(requestBody)
-                });
-
-                if (!response.ok) {
-                    const errorText = await response.text();
-                    console.error('❌ OpenFGA error response:', response.status, errorText);
-                    throw new Error(`OpenFGA returned ${response.status}: ${errorText}`);
-                }
-
-                console.log('✅ OpenFGA permissions updated successfully');
-            }
+            // ... (disabled code)
+            */
         } catch (fgaError: any) {
             // OpenFGA update failed, but continue with role change
             console.error('⚠️  OpenFGA permission update failed:', fgaError.message);
-            console.log('⚠️  Role change will proceed without OpenFGA sync');
-
-            // ✅ DEBUG: Verify after OpenFGA error
-            const verify2 = await pool.query('SELECT role FROM users WHERE user_id = $1', [targetUser.user_id]);
-            console.log('🔍 DEBUG - DB role after OpenFGA error:', verify2.rows[0]?.role);
-            console.log('🔍 DEBUG - Expected role:', newRole);
-            console.log('🔍 DEBUG - Match?', verify2.rows[0]?.role === newRole);
         }
+
+        // ✅ DEBUG: Verify after OpenFGA error
+        const verify2 = await pool.query('SELECT role FROM users WHERE user_id = $1', [targetUser.user_id]);
+        console.log('🔍 DEBUG - DB role after OpenFGA error:', verify2.rows[0]?.role);
+        console.log('🔍 DEBUG - Expected role:', newRole);
+        console.log('🔍 DEBUG - Match?', verify2.rows[0]?.role === newRole);
 
         // ✅ DEBUG: Final verification before return
         const verify3 = await pool.query('SELECT role FROM users WHERE user_id = $1', [targetUser.user_id]);
@@ -1039,6 +964,48 @@ You can type the number (1-6) or the category name.`,
                 executorId
             ]);
 
+            // ✅ NEW: Get creator's user_id for OpenFGA
+            const creatorResult = await pool.query(
+                'SELECT user_id FROM users WHERE id = $1',
+                [executorId]
+            );
+
+            if (creatorResult.rows.length > 0) {
+                const creatorUserId = creatorResult.rows[0].user_id;
+
+                // ✅ NEW: Create OpenFGA tuple - creator becomes owner of THIS specific file
+                try {
+                    console.log(`🔐 Creating OpenFGA owner tuple for ${filename}`);
+
+                    const fgaResponse = await fetch(
+                        `${process.env.FGA_API_URL}/stores/${process.env.FGA_STORE_ID}/write`,
+                        {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                writes: {
+                                    tuple_keys: [{
+                                        user: creatorUserId,  // e.g., "user:alice"
+                                        relation: 'owner',
+                                        object: `resource:${filename}`  // e.g., "resource:test10.pdf"
+                                    }]
+                                }
+                            })
+                        }
+                    );
+
+                    if (!fgaResponse.ok) {
+                        const errorText = await fgaResponse.text();
+                        console.error('⚠️  OpenFGA tuple creation failed:', errorText);
+                    } else {
+                        console.log(`✅ OpenFGA owner tuple created for ${filename}`);
+                    }
+                } catch (fgaError: any) {
+                    console.error('⚠️  OpenFGA tuple creation error:', fgaError.message);
+                    // Don't fail resource creation if OpenFGA fails
+                }
+            }
+
             clearPendingAction(executorId);
 
             return {
@@ -1147,6 +1114,48 @@ ${formatCategoryList()}`,
             false,
             executorId
         ]);
+
+        // ✅ NEW: Get creator's user_id for OpenFGA
+        const creatorResult = await pool.query(
+            'SELECT user_id FROM users WHERE id = $1',
+            [executorId]
+        );
+
+        if (creatorResult.rows.length > 0) {
+            const creatorUserId = creatorResult.rows[0].user_id;
+
+            // ✅ NEW: Create OpenFGA tuple - creator becomes owner of THIS specific file
+            try {
+                console.log(`🔐 Creating OpenFGA owner tuple for ${resourceName}`);
+
+                const fgaResponse = await fetch(
+                    `${process.env.FGA_API_URL} /stores/${process.env.FGA_STORE_ID}/write`,
+                    {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            writes: {
+                                tuple_keys: [{
+                                    user: creatorUserId,  // e.g., "user:alice"
+                                    relation: 'owner',
+                                    object: `resource:${resourceName}`  // e.g., "resource:test10.pdf"
+                                }]
+                            }
+                        })
+                    }
+                );
+
+                if (!fgaResponse.ok) {
+                    const errorText = await fgaResponse.text();
+                    console.error('⚠️  OpenFGA tuple creation failed:', errorText);
+                } else {
+                    console.log(`✅ OpenFGA owner tuple created for ${resourceName}`);
+                }
+            } catch (fgaError: any) {
+                console.error('⚠️  OpenFGA tuple creation error:', fgaError.message);
+                // Don't fail resource creation if OpenFGA fails
+            }
+        }
 
         return {
             success: true,

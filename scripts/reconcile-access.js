@@ -1,9 +1,13 @@
-import pool from './database.js';
+import pool from '../dist/database.js'; // Pointing to compiled database.js
 import { OpenFgaClient } from '@openfga/sdk';
 import dotenv from 'dotenv';
-import { closeDatabase } from './database.js';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
-dotenv.config();
+// Load env
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+dotenv.config({ path: path.resolve(__dirname, '../.env') });
 
 const storeId = process.env.FGA_STORE_ID;
 const modelId = process.env.FGA_MODEL_ID;
@@ -15,71 +19,95 @@ const fgaClient = new OpenFgaClient({
     authorizationModelId: modelId,
 });
 
+// Helper to normalize user ID
+function normalizeUser(id) {
+    if (!id) return null;
+    return id.startsWith('user:') ? id : `user:${id}`;
+}
+
 async function reconcileAccess() {
-    console.log('🔄 Starting Access Reconciliation...');
-    console.log('   Goal: Grant "owner" permission to creators of existing resources.');
+    console.log('🔄 Starting "Grand Unification" Backfill (Groups + Owners) - Normalized IDs...');
 
     try {
-        // 1. Get all resources
-        const res = await pool.query('SELECT id, resource_type, created_by, data FROM resources');
-        const resources = res.rows;
-        console.log(`📊 Found ${resources.length} resources in database.`);
-
         const writes = [];
 
-        for (const r of resources) {
-            if (!r.created_by) {
-                console.warn(`⚠️  Skipping resource ${r.id} (No created_by user)`);
-                continue;
+        // 1. GROUP MIGRATION (Users -> Groups)
+        const userRes = await pool.query('SELECT user_id, username, role FROM users');
+
+        for (const u of userRes.rows) {
+            const userId = normalizeUser(u.user_id);
+            if (!userId) continue;
+
+            // Map DB Role 'editor' -> FGA Group 'editors'
+            // Map DB Role 'viewer' -> FGA Group 'viewers'
+            const role = u.role;
+            if (role === 'viewer' || role === 'editor') {
+                const groupName = `${role}s`; // viewers, editors
+                writes.push({
+                    user: userId,
+                    relation: 'member',
+                    object: `group:${groupName}`
+                });
+                // console.log(`   ➕ Staging Group: ${userId} -> group:${groupName}`);
             }
+        }
 
-            // Construct OpenFGA Object ID
-            // Format: resource:type:id (Matching server.ts implementation)
-            const objectId = `resource:${r.resource_type}:${r.id}`;
-            const user = r.created_by; // This should be "user:tharsan" etc.
+        // 2. RESOURCE MIGRATION (Resources -> Owners & Shared)
+        const resQuery = await pool.query('SELECT id, resource_type, created_by, visible_to_viewer FROM resources');
 
+        for (const r of resQuery.rows) {
+            if (!r.created_by) continue;
+
+            const objectId = `resource:${r.id}`; // Protocol Format
+            const userId = normalizeUser(r.created_by);
+
+            // A. Owner Tuple
             writes.push({
-                user: user,
+                user: userId,
                 relation: 'owner',
                 object: objectId
             });
+
+            // B. Shared Access (Hydrate "Visible to Viewers" -> group:viewers)
+            if (r.visible_to_viewer) {
+                writes.push({
+                    user: `group:viewers#member`,
+                    relation: 'viewer',
+                    object: objectId
+                });
+                // console.log(`   ➕ Staging Shared: group:viewers -> ${objectId}`);
+            }
         }
 
+        // 3. EXECUTE WRITES
         if (writes.length === 0) {
             console.log('✅ No tuples to write.');
-            return;
+            process.exit(0);
         }
 
-        console.log(`📝 Preparing to write ${writes.length} tuples...`);
+        console.log(`🚀 Writing ${writes.length} tuples to OpenFGA...`);
 
-        // Write in batches of 10
         const BATCH_SIZE = 10;
+        let successCount = 0;
+
         for (let i = 0; i < writes.length; i += BATCH_SIZE) {
             const batch = writes.slice(i, i + BATCH_SIZE);
             try {
                 await fgaClient.write({ writes: batch });
-                console.log(`   ✅ Wrote batch ${Math.floor(i / BATCH_SIZE) + 1}`);
+                successCount += batch.length;
+                process.stdout.write('.');
             } catch (err) {
-                console.error(`   ❌ Failed batch:`, err.message);
-                // Try individually if batch fails
-                for (const w of batch) {
-                    try {
-                        await fgaClient.write({ writes: [w] });
-                        console.log(`      ✅ Retry success: ${w.object}`);
-                    } catch (innerErr) {
-                        console.error(`      ❌ Retry failed: ${w.object} -> ${innerErr}`);
-                    }
-                }
+                console.error(`\n❌ Batch failed:`);
+                if (err.message) console.error(err.message);
+                console.error(`   First Item: ${JSON.stringify(batch[0])}`);
             }
         }
 
-        console.log('✅ Reconciliation Complete!');
+        console.log(`\n✅ Backfill Complete (${successCount}/${writes.length} written).`);
 
     } catch (err) {
-        console.error('❌ Error during reconciliation:', err);
+        console.error('❌ Fatal Error:', err);
     } finally {
-        await closeDatabase();
-        // Force exit to ensure script doesn't hang
         process.exit(0);
     }
 }

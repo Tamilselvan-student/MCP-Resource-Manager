@@ -167,7 +167,7 @@ export class MCPHandler {
                     userId,
                     resourceType,
                     resource.id,
-                    'can_view'
+                    'viewer'
                 );
                 if (hasAccess) {
                     accessibleResources.push(resource);
@@ -211,7 +211,7 @@ export class MCPHandler {
             userId,
             resourceType,
             resourceId,
-            'can_view'
+            'viewer'
         );
 
         if (!hasPermission) {
@@ -475,32 +475,39 @@ export class MCPHandler {
     }
 
     // Check permission for specific resource with wildcard fallback
-    private async checkResourcePermission(
+    public async checkResourcePermission(
         userId: string,
         resourceType: string,
         resourceId: string,
         relation: string
     ): Promise<boolean> {
         // First check specific resource permission
+        // Protocol Format: resource:uuid
         const specificPermission = await this.checkPermission(
             userId,
-            `resource:${resourceType}_${resourceId}`,
+            `resource:${resourceId}`,
             relation
         );
 
-        if (specificPermission) {
-            return true;
-        }
-
-        // Fallback to wildcard permission (for backward compatibility)
-        const wildcardPermission = await this.checkPermission(
-            userId,
-            `resource:${resourceType}_*`,
-            relation
-        );
-
-        return wildcardPermission;
+        return specificPermission;
     }
+
+    // Batch check resources for a single user and relation
+    // Returns array of boolean results matching the input order
+    public async batchCheck(
+        checks: { userId: string, relation: string, object: string }[]
+    ): Promise<boolean[]> {
+        console.log(`🔐 Batch checking ${checks.length} permissions...`);
+
+        // Since the JS SDK might not have a dedicated batch check covering distinct resources widely,
+        // we use Promise.all to execute them in parallel.
+        const promises = checks.map(check =>
+            this.checkPermission(check.userId, check.object, check.relation)
+        );
+
+        return Promise.all(promises);
+    }
+
 
     // ============================================
     // CLEANUP
