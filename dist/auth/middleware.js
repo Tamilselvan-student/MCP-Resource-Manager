@@ -44,8 +44,7 @@ export async function authenticateToken(req, res, next) {
         // Look up user in database
         const result = await pool.query(`
             SELECT 
-                id,
-                user_id,
+                uuid,
                 username,
                 email,
                 password_hash,
@@ -56,7 +55,7 @@ export async function authenticateToken(req, res, next) {
                 created_at,
                 updated_at
             FROM users
-            WHERE id = $1 AND is_active = true
+            WHERE uuid = $1 AND is_active = true
         `, [payload.userId]);
         if (result.rows.length === 0) {
             res.status(403).json({

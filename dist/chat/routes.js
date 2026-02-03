@@ -10,7 +10,7 @@ const router = Router();
 // ============================================
 router.post('/message', authenticateToken, async (req, res) => {
     const { message } = req.body;
-    const userId = typeof req.user.id === 'string' ? parseInt(req.user.id) : req.user.id; // Convert to number
+    const userId = req.user.uuid; // UUID is already a string
     console.log(`\n💬 Chat message from ${req.user.username}: "${message}"`);
     // Validate input
     if (!message || typeof message !== 'string' || message.trim().length === 0) {

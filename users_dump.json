@@ -1,0 +1,80 @@
+[
+  {
+    "user_id": "user:testing3",
+    "username": "testing3",
+    "role": "editor",
+    "created_at": "2026-01-29T10:55:53.433Z",
+    "updated_at": "2026-01-29T11:04:52.434Z",
+    "email": "testing3@example.com",
+    "password_hash": "$2b$10$KrmTvDklwhaMgyDcL0hS3.khdUP0J5es4/TaSxMdbEXOVGvmYrJka",
+    "must_change_password": true,
+    "last_login": null,
+    "is_active": true,
+    "id": 27
+  },
+  {
+    "user_id": "user:testing4",
+    "username": "testing4",
+    "role": "editor",
+    "created_at": "2026-01-29T11:26:47.696Z",
+    "updated_at": "2026-01-29T11:28:02.872Z",
+    "email": "testing4@example.com",
+    "password_hash": "$2b$10$1r6ez7L8DqbQYxV0dg6kSeEfzFFWU8ubgXxaoTT3m/BeZdv8gY0yi",
+    "must_change_password": false,
+    "last_login": "2026-01-29T11:27:44.373Z",
+    "is_active": true,
+    "id": 28
+  },
+  {
+    "user_id": "user:viewer1",
+    "username": "viewer1",
+    "role": "viewer",
+    "created_at": "2026-01-27T10:59:30.764Z",
+    "updated_at": "2026-01-27T10:59:55.236Z",
+    "email": "viewer1@example.com",
+    "password_hash": "$2b$10$yq5Lxfd3tMAW7iEI.RHEV.4uC/nKDTy6L.rBPX35GDycgAYscZ5wW",
+    "must_change_password": false,
+    "last_login": "2026-01-29T11:28:34.513Z",
+    "is_active": true,
+    "id": 23
+  },
+  {
+    "user_id": "user:nair2",
+    "username": "nair2",
+    "role": "editor",
+    "created_at": "2026-01-23T08:42:14.358Z",
+    "updated_at": "2026-01-27T10:56:25.790Z",
+    "email": "nair2@example.com",
+    "password_hash": "$2b$10$qPDGthQkstD1e7TsgY1o6OelO1FNIui5d1ev5L85kKUTvnCRxx5tu",
+    "must_change_password": false,
+    "last_login": "2026-01-29T22:38:48.684Z",
+    "is_active": true,
+    "id": 18
+  },
+  {
+    "user_id": "user:testing5",
+    "username": "testing5",
+    "role": "viewer",
+    "created_at": "2026-01-29T21:48:00.013Z",
+    "updated_at": "2026-01-29T21:51:52.029Z",
+    "email": "testing5@example.com",
+    "password_hash": "$2b$10$hS1ADi/JN5iXenPiZ0/H1.ukvMeJVXdBwIYJzCOambMRdsF3bMBMS",
+    "must_change_password": false,
+    "last_login": "2026-01-29T22:38:58.622Z",
+    "is_active": true,
+    "id": 29
+  },
+  {
+    "user_id": "user:tharsan",
+    "username": "tharsan",
+    "role": "admin",
+    "created_at": "2026-01-12T08:57:37.741Z",
+    "updated_at": "2026-01-19T00:53:51.717Z",
+    "email": "tharsan@example.com",
+    "password_hash": "$2b$10$QeSO4anOris.B8a.JIDmqO.dq0gK5f15fwG33Mt6tU.PVZY867mLy",
+    "must_change_password": false,
+    "last_login": "2026-01-29T22:39:19.532Z",
+    "is_active": true,
+    "id": 7
+  }
+]

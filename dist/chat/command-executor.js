@@ -8,7 +8,7 @@ import bcrypt from 'bcryptjs';
 async function checkPermission(userId, requiredRoles) {
     try {
         console.log(`🔐 checkPermission - userId: ${userId} (type: ${typeof userId}), requiredRoles:`, requiredRoles);
-        const result = await pool.query('SELECT role FROM users WHERE id = $1', [userId]);
+        const result = await pool.query('SELECT role FROM users WHERE uuid = $1', [userId]);
         if (result.rows.length === 0) {
             return false;
         }
@@ -55,14 +55,14 @@ async function executeChangeRole(command, executorId) {
     }
     console.log('\n=== ROLE CHANGE DEBUG START ===');
     console.log('📊 targetUser.user_id:', targetUser.user_id);
-    console.log('📊 targetUser.id:', targetUser.id);
+    console.log('📊 targetUser.uuid:', targetUser.uuid);
     console.log('📊 targetUser.role (cached):', targetUser.role);
     console.log('📊 newRole (target):', newRole);
     // Fetch FRESH user data from database to check current role
     // CRITICAL: Use user_id (string) not id (integer) to get accurate data
     console.log('🔍 Executing query: SELECT role FROM users WHERE user_id = $1');
     console.log('🔍 Query parameter [user_id]:', targetUser.user_id);
-    const freshUserResult = await pool.query('SELECT role FROM users WHERE user_id = $1', [targetUser.user_id]);
+    const freshUserResult = await pool.query('SELECT role FROM users WHERE uuid = $1', [targetUser.uuid]);
     console.log('🔍 Query returned rowCount:', freshUserResult.rowCount);
     console.log('🔍 Query returned rows:', JSON.stringify(freshUserResult.rows, null, 2));
     const currentRole = freshUserResult.rows[0]?.role;
@@ -97,18 +97,18 @@ async function executeChangeRole(command, executorId) {
         await client.query('BEGIN');
         console.log(`🔄 Changing ${targetUser.username} from ${currentRole} to ${newRole}`);
         // Update role in database
-        const updateResult = await client.query('UPDATE users SET role = $1, updated_at = NOW() WHERE id = $2 RETURNING role', [newRole, targetUser.id]);
+        const updateResult = await client.query('UPDATE users SET role = $1, updated_at = NOW() WHERE uuid = $2 RETURNING role', [newRole, targetUser.uuid]);
         console.log(`✅ Database UPDATE result:`, updateResult.rows[0]);
         // Log to admin_grants table (optional - table may not exist)
         try {
-            const executorResult = await client.query('SELECT id FROM users WHERE id = $1', [executorId]);
+            const executorResult = await client.query('SELECT uuid FROM users WHERE uuid = $1', [executorId]);
             if (executorResult.rows.length > 0) {
                 await client.query(`
-                    INSERT INTO admin_grants (user_id, granted_by, action, previous_role, new_role, reason)
+                    INSERT INTO admin_grants (user_uuid, granted_by, action, previous_role, new_role, reason)
                     VALUES ($1, $2, $3, $4, $5, $6)
                 `, [
-                    targetUser.id,
-                    executorResult.rows[0].id,
+                    targetUser.uuid,
+                    executorResult.rows[0].uuid,
                     newRole === 'admin' ? 'granted' : 'revoked',
                     targetUser.role,
                     newRole,
@@ -125,7 +125,7 @@ async function executeChangeRole(command, executorId) {
         await client.query('COMMIT');
         console.log('✅ Database transaction committed');
         // ✅ DEBUG: Verify immediately after commit
-        const verify1 = await pool.query('SELECT role FROM users WHERE user_id = $1', [targetUser.user_id]);
+        const verify1 = await pool.query('SELECT role FROM users WHERE uuid = $1', [targetUser.uuid]);
         console.log('🔍 DEBUG - DB role immediately after COMMIT:', verify1.rows[0]?.role);
         console.log('🔍 DEBUG - Expected role:', newRole);
         console.log('🔍 DEBUG - Match?', verify1.rows[0]?.role === newRole);
@@ -144,12 +144,12 @@ async function executeChangeRole(command, executorId) {
             console.error('⚠️  OpenFGA permission update failed:', fgaError.message);
         }
         // ✅ DEBUG: Verify after OpenFGA error
-        const verify2 = await pool.query('SELECT role FROM users WHERE user_id = $1', [targetUser.user_id]);
+        const verify2 = await pool.query('SELECT role FROM users WHERE uuid = $1', [targetUser.uuid]);
         console.log('🔍 DEBUG - DB role after OpenFGA error:', verify2.rows[0]?.role);
         console.log('🔍 DEBUG - Expected role:', newRole);
         console.log('🔍 DEBUG - Match?', verify2.rows[0]?.role === newRole);
         // ✅ DEBUG: Final verification before return
-        const verify3 = await pool.query('SELECT role FROM users WHERE user_id = $1', [targetUser.user_id]);
+        const verify3 = await pool.query('SELECT role FROM users WHERE uuid = $1', [targetUser.uuid]);
         console.log('🔍 DEBUG - DB role at final return:', verify3.rows[0]?.role);
         console.log('🔍 DEBUG - Expected role:', newRole);
         console.log('🔍 DEBUG - Match?', verify3.rows[0]?.role === newRole);
@@ -184,7 +184,7 @@ async function executeChangeRole(command, executorId) {
 async function executeListUsers(command, executorId) {
     const { role } = command.entities;
     try {
-        let query = 'SELECT user_id, username, email, role, created_at FROM users WHERE 1=1';
+        let query = 'SELECT uuid, username, email, role, created_at FROM users WHERE 1=1';
         const params = [];
         if (role) {
             params.push(role);
@@ -273,9 +273,8 @@ ${formatRoleList()}`,
             // Now create the user
             try {
                 const username = userData.email.split('@')[0];
-                const userId = `user:${username}`;
                 // Check if user already exists
-                const existingUser = await pool.query('SELECT id FROM users WHERE email = $1', [userData.email]);
+                const existingUser = await pool.query('SELECT uuid FROM users WHERE email = $1', [userData.email]);
                 if (existingUser.rows.length > 0) {
                     clearPendingAction(executorId);
                     return {
@@ -287,9 +286,9 @@ ${formatRoleList()}`,
                 // Create user
                 const passwordHash = await bcrypt.hash('changeme123', 10);
                 await pool.query(`
-                    INSERT INTO users (user_id, username, email, password_hash, role, must_change_password, is_active, created_at)
-                    VALUES ($1, $2, $3, $4, $5, TRUE, TRUE, NOW())
-                `, [userId, username, userData.email, passwordHash, userData.role]);
+                    INSERT INTO users (username, email, password_hash, role, must_change_password, is_active, created_at, updated_at)
+                    VALUES ($1, $2, $3, $4, TRUE, TRUE, NOW(), NOW())
+                `, [username, userData.email, passwordHash, userData.role]);
                 clearPendingAction(executorId);
                 const roleEmoji = { owner: '🟣', admin: '🔴', editor: '🔵', viewer: '⚪' }[matchedRole] || '⚪';
                 return {
@@ -304,8 +303,7 @@ ${formatRoleList()}`,
                     data: {
                         username,
                         email: userData.email,
-                        role: userData.role,
-                        userId
+                        role: userData.role
                     }
                 };
             }
@@ -327,9 +325,8 @@ ${formatRoleList()}`,
     if (hasEmail && hasRole) {
         try {
             const username = email.split('@')[0];
-            const userId = `user:${username}`;
             // Check if user already exists
-            const existingUser = await pool.query('SELECT id FROM users WHERE email = $1', [email]);
+            const existingUser = await pool.query('SELECT uuid FROM users WHERE email = $1', [email]);
             if (existingUser.rows.length > 0) {
                 return {
                     success: false,
@@ -340,9 +337,9 @@ ${formatRoleList()}`,
             // Create user
             const passwordHash = await bcrypt.hash('changeme123', 10);
             await pool.query(`
-                INSERT INTO users (user_id, username, email, password_hash, role, must_change_password, is_active, created_at)
-                VALUES ($1, $2, $3, $4, $5, TRUE, TRUE, NOW())
-            `, [userId, username, email, passwordHash, role]);
+                INSERT INTO users (username, email, password_hash, role, must_change_password, is_active, created_at, updated_at)
+                VALUES ($1, $2, $3, $4, TRUE, TRUE, NOW(), NOW())
+            `, [username, email, passwordHash, role]);
             const roleEmoji = { owner: '🟣', admin: '🔴', editor: '🔵', viewer: '⚪' }[role] || '⚪';
             return {
                 success: true,
@@ -354,8 +351,7 @@ ${formatRoleList()}`,
                 data: {
                     username,
                     email,
-                    role,
-                    userId
+                    role
                 }
             };
         }
@@ -442,7 +438,7 @@ async function executeDeleteUser(command, executorId) {
     }
     try {
         // Delete user (this also handles protected users)
-        await deleteUser(targetUser.user_id);
+        await deleteUser(targetUser.uuid);
         // Delete OpenFGA tuples
         const resourceTypes = ['file', 'appointment', 'project', 'expense', 'task', 'customer'];
         const allRelations = ['viewer', 'editor', 'owner'];
@@ -450,7 +446,7 @@ async function executeDeleteUser(command, executorId) {
         for (const resourceType of resourceTypes) {
             for (const relation of allRelations) {
                 tuplesToDelete.push({
-                    user: targetUser.user_id,
+                    user: targetUser.uuid,
                     relation: relation,
                     object: `resource:${resourceType}_*`
                 });
@@ -569,7 +565,7 @@ async function executeCheckAccess(command, executorId) {
             // Get all resources visible to this user's role
             const visibilityColumn = `visible_to_${targetUser.role}`;
             const result = await pool.query(`
-                SELECT id, resource_type, data, created_at
+                SELECT uuid, resource_type, data, created_at
                 FROM resources
                 WHERE ${visibilityColumn} = true
                 ORDER BY created_at DESC
@@ -583,7 +579,7 @@ async function executeCheckAccess(command, executorId) {
             }
             // Format resource list
             const resourceList = result.rows.map(r => {
-                const name = r.data?.name || r.data?.title || `Resource ${r.id}`;
+                const name = r.data?.name || r.data?.title || `Resource ${r.uuid}`;
                 const type = r.resource_type || 'unknown';
                 return `• ${name} (${type})`;
             }).join('\n');
@@ -620,7 +616,7 @@ async function executeCheckAccess(command, executorId) {
         }
         try {
             // Get all users and filter by visibility
-            const usersResult = await pool.query('SELECT user_id, username, email, role FROM users ORDER BY role DESC');
+            const usersResult = await pool.query('SELECT uuid, username, email, role FROM users ORDER BY role DESC');
             const usersWithAccess = usersResult.rows.filter(user => {
                 const visibilityColumn = `visible_to_${user.role}`;
                 return resource[visibilityColumn] === true;
@@ -691,7 +687,7 @@ async function executeUpdateVisibility(command, executorId) {
     }
     try {
         const column = `visible_to_${visibility.role}`;
-        await pool.query(`UPDATE resources SET ${column} = $1 WHERE id = $2`, [visibility.access, resource.id]);
+        await pool.query(`UPDATE resources SET ${column} = $1 WHERE uuid = $2`, [visibility.access, resource.uuid]);
         const action = visibility.access ? 'visible to' : 'hidden from';
         const resourceDisplayName = resource.data?.name || resourceName;
         return {
@@ -765,18 +761,20 @@ You can type the number (1-6) or the category name.`,
             const result = await pool.query(`
                 INSERT INTO resources (
                     resource_type,
+                    category,
                     data,
                     visible_to_owner,
                     visible_to_admin,
                     visible_to_editor,
                     visible_to_viewer,
                     created_by,
-                    created_at
+                    created_at,
+                    updated_at
                 )
-                VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+                VALUES ($1, $1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
                 RETURNING *
             `, [
-                matchedCategory, // Use the matched category as resource_type
+                matchedCategory, // Use the matched category as resource_type AND category
                 JSON.stringify({ name: filename, category: matchedCategory }),
                 true,
                 true,
@@ -785,9 +783,8 @@ You can type the number (1-6) or the category name.`,
                 executorId
             ]);
             // ✅ NEW: Get creator's user_id for OpenFGA
-            const creatorResult = await pool.query('SELECT user_id FROM users WHERE id = $1', [executorId]);
-            if (creatorResult.rows.length > 0) {
-                const creatorUserId = creatorResult.rows[0].user_id;
+            const creatorUserId = `user:${executorId}`;
+            if (creatorUserId) {
                 // ✅ NEW: Create OpenFGA tuple - creator becomes owner of THIS specific file
                 try {
                     console.log(`🔐 Creating OpenFGA owner tuple for ${filename}`);
@@ -912,9 +909,9 @@ ${formatCategoryList()}`,
             executorId
         ]);
         // ✅ NEW: Get creator's user_id for OpenFGA
-        const creatorResult = await pool.query('SELECT user_id FROM users WHERE id = $1', [executorId]);
+        const creatorResult = await pool.query('SELECT uuid FROM users WHERE uuid = $1', [executorId]);
         if (creatorResult.rows.length > 0) {
-            const creatorUserId = creatorResult.rows[0].user_id;
+            const creatorUserId = creatorResult.rows[0].uuid;
             // ✅ NEW: Create OpenFGA tuple - creator becomes owner of THIS specific file
             try {
                 console.log(`🔐 Creating OpenFGA owner tuple for ${resourceName}`);
@@ -990,7 +987,7 @@ async function executeDeleteResource(command, executorId) {
         };
     }
     try {
-        await pool.query('DELETE FROM resources WHERE id = $1', [resource.id]);
+        await pool.query('DELETE FROM resources WHERE uuid = $1', [resource.uuid]);
         const resourceDisplayName = resource.data?.name || resourceName;
         return {
             success: true,
@@ -1040,7 +1037,7 @@ async function executeChangeCategory(command, executorId) {
             };
         }
         // Find the resource
-        const resourceResult = await pool.query(`SELECT id, data, resource_type 
+        const resourceResult = await pool.query(`SELECT uuid, data, resource_type 
              FROM resources 
              WHERE LOWER(data->>'name') = LOWER($1)
              LIMIT 1`, [resourceName]);
@@ -1088,7 +1085,7 @@ async function executeChangeCategory(command, executorId) {
              SET data = $1, 
                  resource_type = $2,
                  updated_at = NOW() 
-             WHERE id = $3`, [JSON.stringify(updatedData), matchedNewCategory.toLowerCase(), resource.id]);
+             WHERE uuid = $3`, [JSON.stringify(updatedData), matchedNewCategory.toLowerCase(), resource.uuid]);
         console.log(`✅ Moved ${resourceName} from ${currentCategory} to ${matchedNewCategory}`);
         return {
             success: true,
@@ -1131,7 +1128,7 @@ async function executeRenameResource(command, executorId) {
     }
     try {
         // Find the resource
-        const resourceResult = await pool.query(`SELECT id, data, resource_type 
+        const resourceResult = await pool.query(`SELECT uuid, data, resource_type 
              FROM resources 
              WHERE LOWER(data->>'name') = LOWER($1)
              LIMIT 1`, [oldName]);
@@ -1149,8 +1146,8 @@ async function executeRenameResource(command, executorId) {
              FROM resources 
              WHERE LOWER(data->>'name') = LOWER($1) 
              AND LOWER(data->>'category') = LOWER($2)
-             AND id != $3
-             LIMIT 1`, [newName, category, resource.id]);
+             AND uuid != $3
+             LIMIT 1`, [newName, category, resource.uuid]);
         if (duplicateCheck.rowCount && duplicateCheck.rowCount > 0) {
             return {
                 success: false,
@@ -1167,7 +1164,7 @@ async function executeRenameResource(command, executorId) {
         await pool.query(`UPDATE resources 
              SET data = $1,
                  updated_at = NOW() 
-             WHERE id = $2`, [JSON.stringify(updatedData), resource.id]);
+             WHERE uuid = $2`, [JSON.stringify(updatedData), resource.uuid]);
         return {
             success: true,
             message: `✅ Renamed **${oldName}** to **${newName}** in **${category}**!`,
@@ -1528,10 +1525,10 @@ You can use these when creating resources!`,
 async function executeWhoAmI(command, executorId) {
     try {
         console.log(`👤 executeWhoAmI - executorId: ${executorId} (type: ${typeof executorId})`);
-        const result = await pool.query(`SELECT id, user_id, username, email, role, is_active, must_change_password, 
+        const result = await pool.query(`SELECT uuid, username, email, role, is_active, must_change_password, 
                     created_at, last_login 
              FROM users 
-             WHERE id = $1`, [executorId]);
+             WHERE uuid = $1`, [executorId]);
         if (result.rows.length === 0) {
             return {
                 success: false,
@@ -1599,15 +1596,15 @@ async function executeUserFullDetails(command, executorId) {
         if (!user) {
             return { success: false, message: `❌ User '${command.entities.user}' not found.`, error: 'User not found' };
         }
-        const resourcesQuery = await pool.query(`SELECT COUNT(*) as count FROM resources WHERE created_by = $1`, [user.id]);
+        const resourcesQuery = await pool.query(`SELECT COUNT(*) as count FROM resources WHERE created_by = $1`, [user.uuid]);
         const resourceCount = resourcesQuery.rows[0].count;
-        const historyQuery = await pool.query(`SELECT COUNT(*) as count FROM admin_grants WHERE target_user = $1`, [user.user_id]);
+        const historyQuery = await pool.query(`SELECT COUNT(*) as count FROM admin_grants WHERE target_user = $1`, [user.uuid]);
         const roleChanges = historyQuery.rows[0].count;
         const roleEmojiMap = { 'owner': '🟣', 'admin': '🔴', 'editor': '🔵', 'viewer': '⚪' };
         const roleEmoji = roleEmojiMap[user.role] || '⚪';
         const createdDate = new Date(user.created_at).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' });
         const lastLoginText = user.last_login ? new Date(user.last_login).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'Never';
-        const message = `👤 **COMPLETE USER PROFILE**\n\n**Basic Information:**\n- Name: ${user.name || 'N/A'}\n- Username: ${user.username}\n- Email: ${user.email}\n- Role: ${roleEmoji} ${user.role}\n\n**Account Status:**\n- Active: ${user.is_active ? '✅ Yes' : '❌ No'}\n- Must Change Password: ${user.must_change_password ? '⚠️ Yes' : '✅ No'}\n\n**Activity:**\n- Created: ${createdDate}\n- Last Login: ${lastLoginText}\n\n**Statistics:**\n- Resources Created: ${resourceCount}\n- Role Changes: ${roleChanges}\n\n**Database ID:** ${user.user_id}`;
+        const message = `👤 **COMPLETE USER PROFILE**\n\n**Basic Information:**\n- Name: ${user.name || 'N/A'}\n- Username: ${user.username}\n- Email: ${user.email}\n- Role: ${roleEmoji} ${user.role}\n\n**Account Status:**\n- Active: ${user.is_active ? '✅ Yes' : '❌ No'}\n- Must Change Password: ${user.must_change_password ? '⚠️ Yes' : '✅ No'}\n\n**Activity:**\n- Created: ${createdDate}\n- Last Login: ${lastLoginText}\n\n**Statistics:**\n- Resources Created: ${resourceCount}\n- Role Changes: ${roleChanges}\n\n**Database ID:** ${user.uuid}`;
         return { success: true, message, data: { user, resourceCount, roleChanges } };
     }
     catch (error) {
@@ -1673,7 +1670,7 @@ async function executeUserHistory(command, executorId) {
         if (!user) {
             return { success: false, message: `❌ User '${command.entities.user}' not found.`, error: 'User not found' };
         }
-        const historyQuery = await pool.query(`SELECT ag.*, u_granter.username as granter_username, u_granter.name as granter_name FROM admin_grants ag LEFT JOIN users u_granter ON ag.granted_by = u_granter.user_id WHERE ag.target_user = $1 ORDER BY ag.created_at DESC LIMIT 20`, [user.user_id]);
+        const historyQuery = await pool.query(`SELECT ag.*, u_granter.username as granter_username, u_granter.name as granter_name FROM admin_grants ag LEFT JOIN users u_granter ON ag.granted_by = u_granter.uuid WHERE ag.target_user = $1 ORDER BY ag.created_at DESC LIMIT 20`, [user.uuid]);
         if (historyQuery.rows.length === 0) {
             return { success: true, message: `📋 **${user.username}** has no role change history.`, data: { user, history: [] } };
         }
@@ -1702,13 +1699,13 @@ async function executeUserCreatedResources(command, executorId) {
         if (!user) {
             return { success: false, message: `❌ User '${command.entities.user}' not found.`, error: 'User not found' };
         }
-        const resourcesQuery = await pool.query(`SELECT id, resource_type, data, created_at FROM resources WHERE created_by = $1 ORDER BY created_at DESC`, [user.id]);
+        const resourcesQuery = await pool.query(`SELECT uuid, resource_type, data, created_at FROM resources WHERE created_by = $1 ORDER BY created_at DESC`, [user.uuid]);
         if (resourcesQuery.rows.length === 0) {
             return { success: true, message: `📁 **${user.username}** hasn't created any resources yet.`, data: { user, resources: [] } };
         }
         let response = `📁 **RESOURCES CREATED BY ${user.username}** (${resourcesQuery.rows.length})\n\n`;
         resourcesQuery.rows.forEach((resource, index) => {
-            const name = resource.data?.name || `Resource #${resource.id}`;
+            const name = resource.data?.name || `Resource #${resource.uuid}`;
             const category = resource.data?.category || resource.resource_type;
             const date = new Date(resource.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
             response += `${index + 1}. **${name}** (${category}) - ${date}\n`;
@@ -1749,7 +1746,7 @@ async function executeResourceCreationDate(command, executorId) {
             return { success: false, message: `❌ Resource '${command.entities.resource}' not found.`, error: 'Resource not found' };
         }
         const createdDate = new Date(resource.created_at).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-        const name = resource.data?.name || `Resource #${resource.id}`;
+        const name = resource.data?.name || `Resource #${resource.uuid}`;
         return { success: true, message: `📅 **${name}** was created on **${createdDate}**.`, data: { resource, createdDate } };
     }
     catch (error) {
@@ -1765,8 +1762,8 @@ async function executeResourceCreator(command, executorId) {
         if (!resource) {
             return { success: false, message: `❌ Resource '${command.entities.resource}' not found.`, error: 'Resource not found' };
         }
-        const creatorQuery = await pool.query(`SELECT username, name FROM users WHERE id = $1`, [resource.created_by]);
-        const name = resource.data?.name || `Resource #${resource.id}`;
+        const creatorQuery = await pool.query(`SELECT username, name FROM users WHERE uuid = $1`, [resource.created_by]);
+        const name = resource.data?.name || `Resource #${resource.uuid}`;
         if (creatorQuery.rows.length === 0) {
             return { success: true, message: `🤖 **${name}** was created by the system.`, data: { resource } };
         }

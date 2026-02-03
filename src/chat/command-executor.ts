@@ -1,6 +1,7 @@
 import pool from '../database.js';
 import { getUserRole, addUser, deleteUser } from '../database.js';
 import { ParsedCommand, findUserByIdentifier, findResourceByName } from './nlp-parser.js';
+import { getPendingAction, setPendingAction, clearPendingAction } from './context-manager.js';
 import bcrypt from 'bcryptjs';
 
 // ============================================
@@ -18,11 +19,11 @@ export interface CommandResult {
 // PERMISSION CHECKS
 // ============================================
 
-async function checkPermission(userId: number, requiredRoles: string[]): Promise<boolean> {
+async function checkPermission(userId: string, requiredRoles: string[]): Promise<boolean> {
     try {
         console.log(`🔐 checkPermission - userId: ${userId} (type: ${typeof userId}), requiredRoles:`, requiredRoles);
         const result = await pool.query(
-            'SELECT role FROM users WHERE id = $1',
+            'SELECT role FROM users WHERE uuid = $1',
             [userId]
         );
 
@@ -47,7 +48,7 @@ async function checkPermission(userId: number, requiredRoles: string[]): Promise
  */
 async function executeChangeRole(
     command: ParsedCommand,
-    executorId: number
+    executorId: string
 ): Promise<CommandResult> {
     const { user: userIdentifier, newRole } = command.entities;
 
@@ -82,7 +83,7 @@ async function executeChangeRole(
 
     console.log('\n=== ROLE CHANGE DEBUG START ===');
     console.log('📊 targetUser.user_id:', targetUser.user_id);
-    console.log('📊 targetUser.id:', targetUser.id);
+    console.log('📊 targetUser.uuid:', targetUser.uuid);
     console.log('📊 targetUser.role (cached):', targetUser.role);
     console.log('📊 newRole (target):', newRole);
 
@@ -92,8 +93,8 @@ async function executeChangeRole(
     console.log('🔍 Query parameter [user_id]:', targetUser.user_id);
 
     const freshUserResult = await pool.query(
-        'SELECT role FROM users WHERE user_id = $1',
-        [targetUser.user_id]
+        'SELECT role FROM users WHERE uuid = $1',
+        [targetUser.uuid]
     );
 
     console.log('🔍 Query returned rowCount:', freshUserResult.rowCount);
@@ -139,8 +140,8 @@ async function executeChangeRole(
 
         // Update role in database
         const updateResult = await client.query(
-            'UPDATE users SET role = $1, updated_at = NOW() WHERE id = $2 RETURNING role',
-            [newRole, targetUser.id]
+            'UPDATE users SET role = $1, updated_at = NOW() WHERE uuid = $2 RETURNING role',
+            [newRole, targetUser.uuid]
         );
 
         console.log(`✅ Database UPDATE result:`, updateResult.rows[0]);
@@ -148,17 +149,17 @@ async function executeChangeRole(
         // Log to admin_grants table (optional - table may not exist)
         try {
             const executorResult = await client.query(
-                'SELECT id FROM users WHERE id = $1',
+                'SELECT uuid FROM users WHERE uuid = $1',
                 [executorId]
             );
 
             if (executorResult.rows.length > 0) {
                 await client.query(`
-                    INSERT INTO admin_grants (user_id, granted_by, action, previous_role, new_role, reason)
+                    INSERT INTO admin_grants (user_uuid, granted_by, action, previous_role, new_role, reason)
                     VALUES ($1, $2, $3, $4, $5, $6)
                 `, [
-                    targetUser.id,
-                    executorResult.rows[0].id,
+                    targetUser.uuid,
+                    executorResult.rows[0].uuid,
                     newRole === 'admin' ? 'granted' : 'revoked',
                     targetUser.role,
                     newRole,
@@ -176,7 +177,7 @@ async function executeChangeRole(
         console.log('✅ Database transaction committed');
 
         // ✅ DEBUG: Verify immediately after commit
-        const verify1 = await pool.query('SELECT role FROM users WHERE user_id = $1', [targetUser.user_id]);
+        const verify1 = await pool.query('SELECT role FROM users WHERE uuid = $1', [targetUser.uuid]);
         console.log('🔍 DEBUG - DB role immediately after COMMIT:', verify1.rows[0]?.role);
         console.log('🔍 DEBUG - Expected role:', newRole);
         console.log('🔍 DEBUG - Match?', verify1.rows[0]?.role === newRole);
@@ -196,13 +197,13 @@ async function executeChangeRole(
         }
 
         // ✅ DEBUG: Verify after OpenFGA error
-        const verify2 = await pool.query('SELECT role FROM users WHERE user_id = $1', [targetUser.user_id]);
+        const verify2 = await pool.query('SELECT role FROM users WHERE uuid = $1', [targetUser.uuid]);
         console.log('🔍 DEBUG - DB role after OpenFGA error:', verify2.rows[0]?.role);
         console.log('🔍 DEBUG - Expected role:', newRole);
         console.log('🔍 DEBUG - Match?', verify2.rows[0]?.role === newRole);
 
         // ✅ DEBUG: Final verification before return
-        const verify3 = await pool.query('SELECT role FROM users WHERE user_id = $1', [targetUser.user_id]);
+        const verify3 = await pool.query('SELECT role FROM users WHERE uuid = $1', [targetUser.uuid]);
         console.log('🔍 DEBUG - DB role at final return:', verify3.rows[0]?.role);
         console.log('🔍 DEBUG - Expected role:', newRole);
         console.log('🔍 DEBUG - Match?', verify3.rows[0]?.role === newRole);
@@ -237,12 +238,12 @@ async function executeChangeRole(
  */
 async function executeListUsers(
     command: ParsedCommand,
-    executorId: number
+    executorId: string
 ): Promise<CommandResult> {
     const { role } = command.entities;
 
     try {
-        let query = 'SELECT user_id, username, email, role, created_at FROM users WHERE 1=1';
+        let query = 'SELECT uuid, username, email, role, created_at FROM users WHERE 1=1';
         const params: any[] = [];
 
         if (role) {
@@ -284,7 +285,7 @@ async function executeListUsers(
  */
 async function executeCreateUser(
     command: ParsedCommand,
-    executorId: number
+    executorId: string
 ): Promise<CommandResult> {
     // Import context manager and smart matchers
     const { getPendingAction, setPendingAction, clearPendingAction } = await import('./context-manager.js');
@@ -295,7 +296,7 @@ async function executeCreateUser(
     console.log('👤 CREATE_USER - entities:', command.entities);
 
     // Check for pending multi-step creation
-    const pending = getPendingAction(executorId);
+    const pending = getPendingAction(executorId as any as any);
 
     if (pending && pending.action === 'creating_user') {
         const step = pending.data.step!;
@@ -319,7 +320,7 @@ Please provide a valid email (e.g., user@example.com)`,
 
             userData.email = userInput;
             pending.data.step = 'awaiting_role';
-            setPendingAction(executorId, 'creating_user', pending.data);
+            setPendingAction(executorId as any, 'creating_user', pending.data);
 
             return {
                 success: true,
@@ -352,16 +353,15 @@ ${formatRoleList()}`,
             // Now create the user
             try {
                 const username = userData.email!.split('@')[0];
-                const userId = `user:${username}`;
 
                 // Check if user already exists
                 const existingUser = await pool.query(
-                    'SELECT id FROM users WHERE email = $1',
+                    'SELECT uuid FROM users WHERE email = $1',
                     [userData.email]
                 );
 
                 if (existingUser.rows.length > 0) {
-                    clearPendingAction(executorId);
+                    clearPendingAction(executorId as any);
                     return {
                         success: false,
                         message: `❌ User with email ${userData.email} already exists`,
@@ -373,11 +373,11 @@ ${formatRoleList()}`,
                 const passwordHash = await bcrypt.hash('changeme123', 10);
 
                 await pool.query(`
-                    INSERT INTO users (user_id, username, email, password_hash, role, must_change_password, is_active, created_at)
-                    VALUES ($1, $2, $3, $4, $5, TRUE, TRUE, NOW())
-                `, [userId, username, userData.email, passwordHash, userData.role]);
+                    INSERT INTO users (username, email, password_hash, role, must_change_password, is_active, created_at, updated_at)
+                    VALUES ($1, $2, $3, $4, TRUE, TRUE, NOW(), NOW())
+                `, [username, userData.email, passwordHash, userData.role]);
 
-                clearPendingAction(executorId);
+                clearPendingAction(executorId as any);
 
                 const roleEmoji = { owner: '🟣', admin: '🔴', editor: '🔵', viewer: '⚪' }[matchedRole] || '⚪';
 
@@ -393,14 +393,13 @@ ${formatRoleList()}`,
                     data: {
                         username,
                         email: userData.email,
-                        role: userData.role,
-                        userId
+                        role: userData.role
                     }
                 };
 
             } catch (error: any) {
                 console.error('Error creating user:', error);
-                clearPendingAction(executorId);
+                clearPendingAction(executorId as any);
                 return {
                     success: false,
                     message: '❌ Failed to create user',
@@ -418,11 +417,10 @@ ${formatRoleList()}`,
     if (hasEmail && hasRole) {
         try {
             const username = email.split('@')[0];
-            const userId = `user:${username}`;
 
             // Check if user already exists
             const existingUser = await pool.query(
-                'SELECT id FROM users WHERE email = $1',
+                'SELECT uuid FROM users WHERE email = $1',
                 [email]
             );
 
@@ -438,9 +436,9 @@ ${formatRoleList()}`,
             const passwordHash = await bcrypt.hash('changeme123', 10);
 
             await pool.query(`
-                INSERT INTO users (user_id, username, email, password_hash, role, must_change_password, is_active, created_at)
-                VALUES ($1, $2, $3, $4, $5, TRUE, TRUE, NOW())
-            `, [userId, username, email, passwordHash, role]);
+                INSERT INTO users (username, email, password_hash, role, must_change_password, is_active, created_at, updated_at)
+                VALUES ($1, $2, $3, $4, TRUE, TRUE, NOW(), NOW())
+            `, [username, email, passwordHash, role]);
 
             const roleEmoji = { owner: '🟣', admin: '🔴', editor: '🔵', viewer: '⚪' }[role] || '⚪';
 
@@ -454,8 +452,7 @@ ${formatRoleList()}`,
                 data: {
                     username,
                     email,
-                    role,
-                    userId
+                    role
                 }
             };
 
@@ -471,7 +468,7 @@ ${formatRoleList()}`,
 
     // Missing info - start multi-step process
     if (!hasEmail) {
-        setPendingAction(executorId, 'creating_user', {
+        setPendingAction(executorId as any, 'creating_user', {
             step: 'awaiting_email',
             userData: {}
         });
@@ -486,7 +483,7 @@ ${formatRoleList()}`,
     }
 
     if (!hasRole) {
-        setPendingAction(executorId, 'creating_user', {
+        setPendingAction(executorId as any, 'creating_user', {
             step: 'awaiting_role',
             userData: { email }
         });
@@ -515,7 +512,7 @@ Just type the role name.`,
  */
 async function executeDeleteUser(
     command: ParsedCommand,
-    executorId: number
+    executorId: string
 ): Promise<CommandResult> {
     const { user: userIdentifier } = command.entities;
 
@@ -557,7 +554,7 @@ async function executeDeleteUser(
 
     try {
         // Delete user (this also handles protected users)
-        await deleteUser(targetUser.user_id);
+        await deleteUser(targetUser.uuid);
 
         // Delete OpenFGA tuples
         const resourceTypes = ['file', 'appointment', 'project', 'expense', 'task', 'customer'];
@@ -567,7 +564,7 @@ async function executeDeleteUser(
         for (const resourceType of resourceTypes) {
             for (const relation of allRelations) {
                 tuplesToDelete.push({
-                    user: targetUser.user_id,
+                    user: targetUser.uuid,
                     relation: relation,
                     object: `resource:${resourceType}_*`
                 });
@@ -603,7 +600,7 @@ async function executeDeleteUser(
  */
 async function executeGetUserInfo(
     command: ParsedCommand,
-    executorId: number
+    executorId: string
 ): Promise<CommandResult> {
     try {
         if (!command.entities.user) {
@@ -683,7 +680,7 @@ async function executeGetUserInfo(
  */
 async function executeCheckAccess(
     command: ParsedCommand,
-    executorId: number
+    executorId: string
 ): Promise<CommandResult> {
     const { resource: resourceName, user: userName } = command.entities;
 
@@ -705,7 +702,7 @@ async function executeCheckAccess(
             // Get all resources visible to this user's role
             const visibilityColumn = `visible_to_${targetUser.role}`;
             const result = await pool.query(`
-                SELECT id, resource_type, data, created_at
+                SELECT uuid, resource_type, data, created_at
                 FROM resources
                 WHERE ${visibilityColumn} = true
                 ORDER BY created_at DESC
@@ -721,7 +718,7 @@ async function executeCheckAccess(
 
             // Format resource list
             const resourceList = result.rows.map(r => {
-                const name = r.data?.name || r.data?.title || `Resource ${r.id}`;
+                const name = r.data?.name || r.data?.title || `Resource ${r.uuid}`;
                 const type = r.resource_type || 'unknown';
                 return `• ${name} (${type})`;
             }).join('\n');
@@ -762,7 +759,7 @@ async function executeCheckAccess(
 
         try {
             // Get all users and filter by visibility
-            const usersResult = await pool.query('SELECT user_id, username, email, role FROM users ORDER BY role DESC');
+            const usersResult = await pool.query('SELECT uuid, username, email, role FROM users ORDER BY role DESC');
 
             const usersWithAccess = usersResult.rows.filter(user => {
                 const visibilityColumn = `visible_to_${user.role}`;
@@ -812,7 +809,7 @@ async function executeCheckAccess(
  */
 async function executeUpdateVisibility(
     command: ParsedCommand,
-    executorId: number
+    executorId: string
 ): Promise<CommandResult> {
     const { resource: resourceName, visibility } = command.entities;
 
@@ -848,8 +845,8 @@ async function executeUpdateVisibility(
         const column = `visible_to_${visibility.role}`;
 
         await pool.query(
-            `UPDATE resources SET ${column} = $1 WHERE id = $2`,
-            [visibility.access, resource.id]
+            `UPDATE resources SET ${column} = $1 WHERE uuid = $2`,
+            [visibility.access, resource.uuid]
         );
 
         const action = visibility.access ? 'visible to' : 'hidden from';
@@ -880,7 +877,7 @@ async function executeUpdateVisibility(
  */
 async function executeCreateResource(
     command: ParsedCommand,
-    executorId: number
+    executorId: string
 ): Promise<CommandResult> {
     // Import context manager and smart matchers
     const { getPendingAction, setPendingAction, clearPendingAction } = await import('./context-manager.js');
@@ -891,7 +888,7 @@ async function executeCreateResource(
     console.log('📁 CREATE_RESOURCE - entities:', command.entities);
 
     // Check if this is a follow-up response for category
-    const pending = getPendingAction(executorId);
+    const pending = getPendingAction(executorId as any);
     if (pending && pending.action === 'awaiting_category') {
         // User is responding with category
         const categoryInput = (command.raw || '').trim();
@@ -931,7 +928,7 @@ You can type the number (1-6) or the category name.`,
 
             if (duplicateCheck.rowCount && duplicateCheck.rowCount > 0) {
                 console.log(`❌ Duplicate found: ${filename} already exists in ${matchedCategory}`);
-                clearPendingAction(executorId);
+                clearPendingAction(executorId as any);
                 return {
                     success: false,
                     message: `❌ A file named **${filename}** already exists in **${matchedCategory}**.\n\n` +
@@ -944,18 +941,20 @@ You can type the number (1-6) or the category name.`,
             const result = await pool.query(`
                 INSERT INTO resources (
                     resource_type,
+                    category,
                     data,
                     visible_to_owner,
                     visible_to_admin,
                     visible_to_editor,
                     visible_to_viewer,
                     created_by,
-                    created_at
+                    created_at,
+                    updated_at
                 )
-                VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+                VALUES ($1, $1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
                 RETURNING *
             `, [
-                matchedCategory,  // Use the matched category as resource_type
+                matchedCategory,  // Use the matched category as resource_type AND category
                 JSON.stringify({ name: filename, category: matchedCategory }),
                 true,
                 true,
@@ -965,13 +964,9 @@ You can type the number (1-6) or the category name.`,
             ]);
 
             // ✅ NEW: Get creator's user_id for OpenFGA
-            const creatorResult = await pool.query(
-                'SELECT user_id FROM users WHERE id = $1',
-                [executorId]
-            );
+            const creatorUserId = `user:${executorId}`;
 
-            if (creatorResult.rows.length > 0) {
-                const creatorUserId = creatorResult.rows[0].user_id;
+            if (creatorUserId) {
 
                 // ✅ NEW: Create OpenFGA tuple - creator becomes owner of THIS specific file
                 try {
@@ -1006,7 +1001,7 @@ You can type the number (1-6) or the category name.`,
                 }
             }
 
-            clearPendingAction(executorId);
+            clearPendingAction(executorId as any);
 
             return {
                 success: true,
@@ -1016,7 +1011,7 @@ You can type the number (1-6) or the category name.`,
 
         } catch (error: any) {
             console.error('Error creating resource:', error);
-            clearPendingAction(executorId);
+            clearPendingAction(executorId as any);
             return {
                 success: false,
                 message: '❌ Failed to create resource',
@@ -1039,7 +1034,7 @@ You can type the number (1-6) or the category name.`,
     // Check if category is provided
     if (!category) {
         // Store pending action and ask for category
-        setPendingAction(executorId, 'awaiting_category', { filename: resourceName });
+        setPendingAction(executorId as any, 'awaiting_category', { filename: resourceName });
 
         return {
             success: true,
@@ -1117,12 +1112,12 @@ ${formatCategoryList()}`,
 
         // ✅ NEW: Get creator's user_id for OpenFGA
         const creatorResult = await pool.query(
-            'SELECT user_id FROM users WHERE id = $1',
+            'SELECT uuid FROM users WHERE uuid = $1',
             [executorId]
         );
 
         if (creatorResult.rows.length > 0) {
-            const creatorUserId = creatorResult.rows[0].user_id;
+            const creatorUserId = creatorResult.rows[0].uuid;
 
             // ✅ NEW: Create OpenFGA tuple - creator becomes owner of THIS specific file
             try {
@@ -1178,7 +1173,7 @@ ${formatCategoryList()}`,
  */
 async function executeDeleteResource(
     command: ParsedCommand,
-    executorId: number
+    executorId: string
 ): Promise<CommandResult> {
     const { resource: resourceName } = command.entities;
 
@@ -1211,7 +1206,7 @@ async function executeDeleteResource(
     }
 
     try {
-        await pool.query('DELETE FROM resources WHERE id = $1', [resource.id]);
+        await pool.query('DELETE FROM resources WHERE uuid = $1', [resource.uuid]);
 
         const resourceDisplayName = resource.data?.name || resourceName;
 
@@ -1236,7 +1231,7 @@ async function executeDeleteResource(
  */
 async function executeChangeCategory(
     command: ParsedCommand,
-    executorId: number
+    executorId: string
 ): Promise<CommandResult> {
     const { resource: resourceName, newCategory, oldCategory } = command.entities;
 
@@ -1274,7 +1269,7 @@ async function executeChangeCategory(
 
         // Find the resource
         const resourceResult = await pool.query(
-            `SELECT id, data, resource_type 
+            `SELECT uuid, data, resource_type 
              FROM resources 
              WHERE LOWER(data->>'name') = LOWER($1)
              LIMIT 1`,
@@ -1335,8 +1330,8 @@ async function executeChangeCategory(
              SET data = $1, 
                  resource_type = $2,
                  updated_at = NOW() 
-             WHERE id = $3`,
-            [JSON.stringify(updatedData), matchedNewCategory.toLowerCase(), resource.id]
+             WHERE uuid = $3`,
+            [JSON.stringify(updatedData), matchedNewCategory.toLowerCase(), resource.uuid]
         );
 
         console.log(`✅ Moved ${resourceName} from ${currentCategory} to ${matchedNewCategory}`);
@@ -1366,7 +1361,7 @@ async function executeChangeCategory(
  */
 async function executeRenameResource(
     command: ParsedCommand,
-    executorId: number
+    executorId: string
 ): Promise<CommandResult> {
     const { resource: oldName, newName } = command.entities;
 
@@ -1391,7 +1386,7 @@ async function executeRenameResource(
     try {
         // Find the resource
         const resourceResult = await pool.query(
-            `SELECT id, data, resource_type 
+            `SELECT uuid, data, resource_type 
              FROM resources 
              WHERE LOWER(data->>'name') = LOWER($1)
              LIMIT 1`,
@@ -1415,9 +1410,9 @@ async function executeRenameResource(
              FROM resources 
              WHERE LOWER(data->>'name') = LOWER($1) 
              AND LOWER(data->>'category') = LOWER($2)
-             AND id != $3
+             AND uuid != $3
              LIMIT 1`,
-            [newName, category, resource.id]
+            [newName, category, resource.uuid]
         );
 
         if (duplicateCheck.rowCount && duplicateCheck.rowCount > 0) {
@@ -1439,8 +1434,8 @@ async function executeRenameResource(
             `UPDATE resources 
              SET data = $1,
                  updated_at = NOW() 
-             WHERE id = $2`,
-            [JSON.stringify(updatedData), resource.id]
+             WHERE uuid = $2`,
+            [JSON.stringify(updatedData), resource.uuid]
         );
 
         return {
@@ -1469,7 +1464,7 @@ async function executeRenameResource(
  */
 async function executeSystemStats(
     command: ParsedCommand,
-    executorId: number
+    executorId: string
 ): Promise<CommandResult> {
     try {
         // Get user counts by role
@@ -1550,7 +1545,7 @@ async function executeSystemStats(
  */
 async function executeListResources(
     command: ParsedCommand,
-    executorId: number
+    executorId: string
 ): Promise<CommandResult> {
     try {
         const categoryFilter = command.entities.category;
@@ -1630,7 +1625,7 @@ async function executeListResources(
  */
 async function executeHelp(
     command: ParsedCommand,
-    executorId: number
+    executorId: string
 ): Promise<CommandResult> {
     return {
         success: true,
@@ -1674,7 +1669,7 @@ async function executeHelp(
 
 export async function executeCommand(
     command: ParsedCommand,
-    executorId: number
+    executorId: string
 ): Promise<CommandResult> {
     // Import response templates
     const { RESPONSE_TEMPLATES, FALLBACK_RESPONSES, getRandomResponse } = await import('./nlp-parser.js');
@@ -1684,7 +1679,7 @@ export async function executeCommand(
     // ============================================
     // Check if user is responding to a pending question
     const { getPendingAction } = await import('./context-manager.js');
-    const pending = getPendingAction(executorId);
+    const pending = getPendingAction(executorId as any);
 
     if (pending) {
         console.log(`🔄 Found pending action: ${pending.action} for user ${executorId}`);
@@ -1878,15 +1873,15 @@ You can use these when creating resources!`,
  */
 async function executeWhoAmI(
     command: ParsedCommand,
-    executorId: number
+    executorId: string
 ): Promise<CommandResult> {
     try {
         console.log(`👤 executeWhoAmI - executorId: ${executorId} (type: ${typeof executorId})`);
         const result = await pool.query(
-            `SELECT id, user_id, username, email, role, is_active, must_change_password, 
+            `SELECT uuid, username, email, role, is_active, must_change_password, 
                     created_at, last_login 
              FROM users 
-             WHERE id = $1`,
+             WHERE uuid = $1`,
             [executorId]
         );
 
@@ -1930,7 +1925,7 @@ async function executeWhoAmI(
  * ENHANCED QUERY HANDLERS
  */
 
-async function executeUserCreationDate(command: ParsedCommand, executorId: number): Promise<CommandResult> {
+async function executeUserCreationDate(command: ParsedCommand, executorId: string): Promise<CommandResult> {
     if (!command.entities.user) {
         return { success: false, message: '🤔 Which user are you asking about?', error: 'Missing user parameter' };
     }
@@ -1952,7 +1947,7 @@ async function executeUserCreationDate(command: ParsedCommand, executorId: numbe
     }
 }
 
-async function executeUserFullDetails(command: ParsedCommand, executorId: number): Promise<CommandResult> {
+async function executeUserFullDetails(command: ParsedCommand, executorId: string): Promise<CommandResult> {
     if (!command.entities.user) {
         return { success: false, message: '🤔 Which user do you want full details for?', error: 'Missing user parameter' };
     }
@@ -1961,22 +1956,22 @@ async function executeUserFullDetails(command: ParsedCommand, executorId: number
         if (!user) {
             return { success: false, message: `❌ User '${command.entities.user}' not found.`, error: 'User not found' };
         }
-        const resourcesQuery = await pool.query(`SELECT COUNT(*) as count FROM resources WHERE created_by = $1`, [user.id]);
+        const resourcesQuery = await pool.query(`SELECT COUNT(*) as count FROM resources WHERE created_by = $1`, [user.uuid]);
         const resourceCount = resourcesQuery.rows[0].count;
-        const historyQuery = await pool.query(`SELECT COUNT(*) as count FROM admin_grants WHERE target_user = $1`, [user.user_id]);
+        const historyQuery = await pool.query(`SELECT COUNT(*) as count FROM admin_grants WHERE target_user = $1`, [user.uuid]);
         const roleChanges = historyQuery.rows[0].count;
         const roleEmojiMap: { [key: string]: string } = { 'owner': '🟣', 'admin': '🔴', 'editor': '🔵', 'viewer': '⚪' };
         const roleEmoji = roleEmojiMap[user.role] || '⚪';
         const createdDate = new Date(user.created_at).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' });
         const lastLoginText = user.last_login ? new Date(user.last_login).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'Never';
-        const message = `👤 **COMPLETE USER PROFILE**\n\n**Basic Information:**\n- Name: ${user.name || 'N/A'}\n- Username: ${user.username}\n- Email: ${user.email}\n- Role: ${roleEmoji} ${user.role}\n\n**Account Status:**\n- Active: ${user.is_active ? '✅ Yes' : '❌ No'}\n- Must Change Password: ${user.must_change_password ? '⚠️ Yes' : '✅ No'}\n\n**Activity:**\n- Created: ${createdDate}\n- Last Login: ${lastLoginText}\n\n**Statistics:**\n- Resources Created: ${resourceCount}\n- Role Changes: ${roleChanges}\n\n**Database ID:** ${user.user_id}`;
+        const message = `👤 **COMPLETE USER PROFILE**\n\n**Basic Information:**\n- Name: ${user.name || 'N/A'}\n- Username: ${user.username}\n- Email: ${user.email}\n- Role: ${roleEmoji} ${user.role}\n\n**Account Status:**\n- Active: ${user.is_active ? '✅ Yes' : '❌ No'}\n- Must Change Password: ${user.must_change_password ? '⚠️ Yes' : '✅ No'}\n\n**Activity:**\n- Created: ${createdDate}\n- Last Login: ${lastLoginText}\n\n**Statistics:**\n- Resources Created: ${resourceCount}\n- Role Changes: ${roleChanges}\n\n**Database ID:** ${user.uuid}`;
         return { success: true, message, data: { user, resourceCount, roleChanges } };
     } catch (error: any) {
         return { success: false, message: '❌ Failed to get user details', error: error.message };
     }
 }
 
-async function executeUserCreator(command: ParsedCommand, executorId: number): Promise<CommandResult> {
+async function executeUserCreator(command: ParsedCommand, executorId: string): Promise<CommandResult> {
     if (!command.entities.user) {
         return { success: false, message: '🤔 Which user are you asking about?', error: 'Missing user parameter' };
     }
@@ -1991,7 +1986,7 @@ async function executeUserCreator(command: ParsedCommand, executorId: number): P
     }
 }
 
-async function executeUserLastActive(command: ParsedCommand, executorId: number): Promise<CommandResult> {
+async function executeUserLastActive(command: ParsedCommand, executorId: string): Promise<CommandResult> {
     if (!command.entities.user) {
         return { success: false, message: '🤔 Which user are you asking about?', error: 'Missing user parameter' };
     }
@@ -2024,7 +2019,7 @@ async function executeUserLastActive(command: ParsedCommand, executorId: number)
     }
 }
 
-async function executeUserHistory(command: ParsedCommand, executorId: number): Promise<CommandResult> {
+async function executeUserHistory(command: ParsedCommand, executorId: string): Promise<CommandResult> {
     if (!command.entities.user) {
         return { success: false, message: "🤔 Which user's history do you want to see?", error: 'Missing user parameter' };
     }
@@ -2033,7 +2028,7 @@ async function executeUserHistory(command: ParsedCommand, executorId: number): P
         if (!user) {
             return { success: false, message: `❌ User '${command.entities.user}' not found.`, error: 'User not found' };
         }
-        const historyQuery = await pool.query(`SELECT ag.*, u_granter.username as granter_username, u_granter.name as granter_name FROM admin_grants ag LEFT JOIN users u_granter ON ag.granted_by = u_granter.user_id WHERE ag.target_user = $1 ORDER BY ag.created_at DESC LIMIT 20`, [user.user_id]);
+        const historyQuery = await pool.query(`SELECT ag.*, u_granter.username as granter_username, u_granter.name as granter_name FROM admin_grants ag LEFT JOIN users u_granter ON ag.granted_by = u_granter.uuid WHERE ag.target_user = $1 ORDER BY ag.created_at DESC LIMIT 20`, [user.uuid]);
         if (historyQuery.rows.length === 0) {
             return { success: true, message: `📋 **${user.username}** has no role change history.`, data: { user, history: [] } };
         }
@@ -2052,7 +2047,7 @@ async function executeUserHistory(command: ParsedCommand, executorId: number): P
     }
 }
 
-async function executeUserCreatedResources(command: ParsedCommand, executorId: number): Promise<CommandResult> {
+async function executeUserCreatedResources(command: ParsedCommand, executorId: string): Promise<CommandResult> {
     if (!command.entities.user) {
         return { success: false, message: "🤔 Which user's resources do you want to see?", error: 'Missing user parameter' };
     }
@@ -2061,13 +2056,13 @@ async function executeUserCreatedResources(command: ParsedCommand, executorId: n
         if (!user) {
             return { success: false, message: `❌ User '${command.entities.user}' not found.`, error: 'User not found' };
         }
-        const resourcesQuery = await pool.query(`SELECT id, resource_type, data, created_at FROM resources WHERE created_by = $1 ORDER BY created_at DESC`, [user.id]);
+        const resourcesQuery = await pool.query(`SELECT uuid, resource_type, data, created_at FROM resources WHERE created_by = $1 ORDER BY created_at DESC`, [user.uuid]);
         if (resourcesQuery.rows.length === 0) {
             return { success: true, message: `📁 **${user.username}** hasn't created any resources yet.`, data: { user, resources: [] } };
         }
         let response = `📁 **RESOURCES CREATED BY ${user.username}** (${resourcesQuery.rows.length})\n\n`;
         resourcesQuery.rows.forEach((resource, index) => {
-            const name = resource.data?.name || `Resource #${resource.id}`;
+            const name = resource.data?.name || `Resource #${resource.uuid}`;
             const category = resource.data?.category || resource.resource_type;
             const date = new Date(resource.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
             response += `${index + 1}. **${name}** (${category}) - ${date}\n`;
@@ -2078,7 +2073,7 @@ async function executeUserCreatedResources(command: ParsedCommand, executorId: n
     }
 }
 
-async function executeUserPasswordStatus(command: ParsedCommand, executorId: number): Promise<CommandResult> {
+async function executeUserPasswordStatus(command: ParsedCommand, executorId: string): Promise<CommandResult> {
     if (!command.entities.user) {
         return { success: false, message: "🤔 Which user's password status do you want to check?", error: 'Missing user parameter' };
     }
@@ -2097,7 +2092,7 @@ async function executeUserPasswordStatus(command: ParsedCommand, executorId: num
     }
 }
 
-async function executeResourceCreationDate(command: ParsedCommand, executorId: number): Promise<CommandResult> {
+async function executeResourceCreationDate(command: ParsedCommand, executorId: string): Promise<CommandResult> {
     if (!command.entities.resource) {
         return { success: false, message: '🤔 Which resource are you asking about?', error: 'Missing resource parameter' };
     }
@@ -2107,14 +2102,14 @@ async function executeResourceCreationDate(command: ParsedCommand, executorId: n
             return { success: false, message: `❌ Resource '${command.entities.resource}' not found.`, error: 'Resource not found' };
         }
         const createdDate = new Date(resource.created_at).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-        const name = resource.data?.name || `Resource #${resource.id}`;
+        const name = resource.data?.name || `Resource #${resource.uuid}`;
         return { success: true, message: `📅 **${name}** was created on **${createdDate}**.`, data: { resource, createdDate } };
     } catch (error: any) {
         return { success: false, message: '❌ Failed to get resource creation date', error: error.message };
     }
 }
 
-async function executeResourceCreator(command: ParsedCommand, executorId: number): Promise<CommandResult> {
+async function executeResourceCreator(command: ParsedCommand, executorId: string): Promise<CommandResult> {
     if (!command.entities.resource) {
         return { success: false, message: '🤔 Which resource are you asking about?', error: 'Missing resource parameter' };
     }
@@ -2123,8 +2118,8 @@ async function executeResourceCreator(command: ParsedCommand, executorId: number
         if (!resource) {
             return { success: false, message: `❌ Resource '${command.entities.resource}' not found.`, error: 'Resource not found' };
         }
-        const creatorQuery = await pool.query(`SELECT username, name FROM users WHERE id = $1`, [resource.created_by]);
-        const name = resource.data?.name || `Resource #${resource.id}`;
+        const creatorQuery = await pool.query(`SELECT username, name FROM users WHERE uuid = $1`, [resource.created_by]);
+        const name = resource.data?.name || `Resource #${resource.uuid}`;
         if (creatorQuery.rows.length === 0) {
             return { success: true, message: `🤖 **${name}** was created by the system.`, data: { resource } };
         }
@@ -2135,7 +2130,7 @@ async function executeResourceCreator(command: ParsedCommand, executorId: number
     }
 }
 
-async function executeListInactiveUsers(command: ParsedCommand, executorId: number): Promise<CommandResult> {
+async function executeListInactiveUsers(command: ParsedCommand, executorId: string): Promise<CommandResult> {
     try {
         const usersQuery = await pool.query(`SELECT username, name, email, role, created_at FROM users WHERE is_active = FALSE ORDER BY username`);
         if (usersQuery.rows.length === 0) {
@@ -2153,7 +2148,7 @@ async function executeListInactiveUsers(command: ParsedCommand, executorId: numb
     }
 }
 
-async function executeListUsersNeedPasswordChange(command: ParsedCommand, executorId: number): Promise<CommandResult> {
+async function executeListUsersNeedPasswordChange(command: ParsedCommand, executorId: string): Promise<CommandResult> {
     try {
         const usersQuery = await pool.query(`SELECT username, name, email, role, created_at FROM users WHERE must_change_password = TRUE ORDER BY username`);
         if (usersQuery.rows.length === 0) {
@@ -2170,3 +2165,6 @@ async function executeListUsersNeedPasswordChange(command: ParsedCommand, execut
         return { success: false, message: '❌ Failed to list users needing password change', error: error.message };
     }
 }
+
+
+

@@ -1,0 +1,12 @@
+[
+  "uuid (uuid)",
+  "email (text)",
+  "username (text)",
+  "password_hash (text)",
+  "role (text)",
+  "is_active (boolean)",
+  "must_change_password (boolean)",
+  "last_login (timestamp without time zone)",
+  "created_at (timestamp without time zone)",
+  "updated_at (timestamp without time zone)"
+]

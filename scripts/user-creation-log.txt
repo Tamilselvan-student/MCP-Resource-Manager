@@ -1,0 +1,20 @@
+🔧 Creating/Updating user: tharsank@example.com
+
+Hashing password...
+Hash generated successfully
+
+Creating new user...
+❌ Error: duplicate key value violates unique constraint "users_username_key"
+{
+  "length": 208,
+  "name": "error",
+  "severity": "ERROR",
+  "code": "23505",
+  "detail": "Key (username)=(tharsan) already exists.",
+  "schema": "public",
+  "table": "users",
+  "constraint": "users_username_key",
+  "file": "nbtinsert.c",
+  "line": "664",
+  "routine": "_bt_check_unique"
+}

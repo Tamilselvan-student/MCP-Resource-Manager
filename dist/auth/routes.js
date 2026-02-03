@@ -50,11 +50,9 @@ router.post('/signup', async (req, res) => {
                 error: 'Email already registered'
             });
         }
-        // Generate user_id
-        const userId = `user:${username.toLowerCase()}`;
-        // Check if user_id already exists
-        const existingUserId = await pool.query('SELECT id FROM users WHERE id = $1', [userId]);
-        if (existingUserId.rows.length > 0) {
+        // Check if username already exists
+        const existingUsername = await pool.query('SELECT username FROM users WHERE username = $1', [username]);
+        if (existingUsername.rows.length > 0) {
             return res.status(400).json({
                 success: false,
                 error: 'Username already taken'
@@ -64,14 +62,14 @@ router.post('/signup', async (req, res) => {
         const passwordHash = await hashPassword(password);
         // Create new user (default role: viewer)
         const result = await pool.query(`
-            INSERT INTO users (user_id, username, email, password_hash, role, must_change_password, is_active)
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
-            RETURNING id, user_id, username, email, role, must_change_password, is_active
-        `, [userId, username, email, passwordHash, 'viewer', false, true]);
+            INSERT INTO users (username, email, password_hash, role, must_change_password, is_active, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
+            RETURNING uuid, username, email, role, must_change_password, is_active
+        `, [username, email, passwordHash, 'viewer', false, true]);
         const newUser = result.rows[0];
         // Generate JWT token
         const token = generateToken({
-            userId: newUser.id,
+            userId: newUser.uuid,
             email: newUser.email,
             role: newUser.role
         });
@@ -87,8 +85,8 @@ router.post('/signup', async (req, res) => {
         return res.json({
             success: true,
             user: {
-                id: newUser.id,
-                user_id: newUser.user_id,
+                id: newUser.uuid,
+                user_id: newUser.uuid,
                 username: newUser.username,
                 email: newUser.email,
                 role: newUser.role,
@@ -121,8 +119,7 @@ router.post('/login', async (req, res) => {
         // Look up user by email
         const result = await pool.query(`
             SELECT 
-                id,
-                user_id,
+                uuid,
                 username,
                 email,
                 password_hash,
@@ -154,7 +151,7 @@ router.post('/login', async (req, res) => {
         }
         // Generate JWT token
         const token = generateToken({
-            userId: user.id,
+            userId: user.uuid,
             email: user.email,
             role: user.role
         });
@@ -169,15 +166,15 @@ router.post('/login', async (req, res) => {
         await pool.query(`
             UPDATE users 
             SET last_login = NOW() 
-            WHERE id = $1
-        `, [user.id]);
+            WHERE uuid = $1
+        `, [user.uuid]);
         console.log(`✅ User logged in: ${user.email} (${user.role})`);
         // Return user info (without password_hash)
         return res.json({
             success: true,
             user: {
-                id: user.id,
-                user_id: user.id,
+                id: user.uuid,
+                user_id: user.uuid,
                 username: user.username,
                 email: user.email,
                 role: user.role,
@@ -208,8 +205,8 @@ router.get('/me', authenticateToken, async (req, res) => {
     return res.json({
         success: true,
         user: {
-            id: req.user.id,
-            user_id: req.user.id,
+            id: req.user.uuid,
+            user_id: req.user.uuid,
             username: req.user.username,
             email: req.user.email,
             role: req.user.role,
@@ -277,8 +274,8 @@ router.post('/change-password', authenticateToken, async (req, res) => {
             SET password_hash = $1, 
                 must_change_password = FALSE,
                 updated_at = NOW()
-            WHERE id = $2
-        `, [newPasswordHash, req.user.id]);
+            WHERE uuid = $2
+        `, [newPasswordHash, req.user.uuid]);
         console.log(`✅ Password changed for user: ${req.user.email}`);
         return res.json({
             success: true,

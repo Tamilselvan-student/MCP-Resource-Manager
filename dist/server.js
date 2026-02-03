@@ -464,8 +464,8 @@ app.post('/api/admin/users', async (req, res) => {
         return res.status(400).json({ success: false, error: 'userId, username, email, and role required' });
     }
     try {
-        // Add to database with email and name
-        await addUser(userId, username, email, name || username, role);
+        // Add to database with email
+        await addUser(username, email, role);
         // Map role to OpenFGA relation
         const roleToRelation = {
             'viewer': 'viewer',
@@ -693,8 +693,8 @@ app.patch('/api/admin/users/:userId/role', async (req, res) => {
         catch (e) {
             console.error('❌ Group swap error:', e);
         }
-        // Update database (use user_id not id - userId is a string like "user:watersheep")
-        await pool.query('UPDATE users SET role = $1, updated_at = NOW() WHERE user_id = $2', [newRole, userId]);
+        // Update database (use uuid not id)
+        await pool.query('UPDATE users SET role = $1, updated_at = NOW() WHERE uuid = $2', [newRole, userId]);
         console.log(`✅ Changed ${userId} role: ${currentRole} → ${newRole} (OpenFGA groups updated)`);
         return res.json({ success: true, message: `Role updated to ${newRole}` });
     }
@@ -723,8 +723,11 @@ app.post('/api/resources', authenticateToken, async (req, res) => {
         return res.status(400).json({ success: false, error: 'resource_type and data are required' });
     }
     try {
+        // Use resource_type directly as category (categories table uses singular names)
+        const category = resource_type;
         const result = await pool.query(`
             INSERT INTO resources (
+                category,
                 resource_type, 
                 data, 
                 visible_to_owner, 
@@ -734,16 +737,17 @@ app.post('/api/resources', authenticateToken, async (req, res) => {
                 created_by,
                 created_at
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
             RETURNING *
         `, [
+            category,
             resource_type,
             JSON.stringify(data),
             visible_to_owner !== false, // Default true
             visible_to_admin !== false, // Default true
             visible_to_editor !== false, // Default true
             visible_to_viewer !== false, // Default true
-            req.user.user_id // Add created_by from authenticated user
+            req.user.uuid // Add created_by from authenticated user
         ]);
         const newResource = result.rows[0];
         console.log(`✅ Resource created: ${data.name || resource_type} (${resource_type}) by ${req.user.username}`);
@@ -751,8 +755,8 @@ app.post('/api/resources', authenticateToken, async (req, res) => {
         // OPENFGA: GRANT OWNER ACCESS TO CREATOR
         try {
             // Protocol Format: resource:uuid (Matches Architect's Directive)
-            const documentId = `resource:${newResource.id}`;
-            const userId = req.user.user_id;
+            const documentId = `resource:${newResource.uuid}`;
+            const userId = req.user.uuid;
             console.log(`🔐 Granting owner access for ${documentId} to ${userId}`);
             const response = await fetch(`${process.env.FGA_API_URL}/stores/${process.env.FGA_STORE_ID}/write`, {
                 method: 'POST',
@@ -823,7 +827,7 @@ app.post('/api/resources', authenticateToken, async (req, res) => {
 app.delete('/api/resources/:id', authenticateToken, requireRole(['owner', 'admin']), async (req, res) => {
     const { id } = req.params;
     try {
-        const result = await pool.query('DELETE FROM resources WHERE id = $1 RETURNING *', [id]);
+        const result = await pool.query('DELETE FROM resources WHERE uuid = $1 RETURNING *', [id]);
         if (result.rows.length === 0) {
             return res.status(404).json({ success: false, error: 'Resource not found' });
         }
@@ -864,9 +868,9 @@ app.get('/api/resources', authenticateToken, async (req, res) => {
         else {
             // Batch check with OpenFGA
             const checkRequests = resourcesToCheck.map(r => ({
-                userId: req.user.user_id,
+                userId: req.user.uuid,
                 relation: 'viewer',
-                object: `resource:${r.id}`
+                object: `resource:${r.uuid}`
             }));
             // Execute batch check
             const results = await mcpHandler.batchCheck(checkRequests);
@@ -907,8 +911,64 @@ app.post('/api/admin/update-visibility', authenticateToken, async (req, res) => 
             return res.status(400).json({ success: false, error: 'Invalid role' });
         }
         const column = `visible_to_${role}`;
-        await pool.query(`UPDATE resources SET ${column} = $1 WHERE id = $2`, [isVisible, resourceId]);
+        await pool.query(`UPDATE resources SET ${column} = $1 WHERE uuid = $2`, [isVisible, resourceId]);
         console.log(`✅ Updated visibility: ${resourceId} - ${role} = ${isVisible}`);
+        // ==========================================
+        // SYNC WITH OPENFGA
+        // ==========================================
+        try {
+            const groupName = `${role}s`; // viewer -> viewers, editor -> editors
+            const tuple = {
+                user: `group:${groupName}#member`,
+                relation: role, // viewer or editor
+                object: `resource:${resourceId}`
+            };
+            if (isVisible) {
+                // Add tuple (grant access)
+                console.log(`🔐 Granting ${role} access to ${resourceId} for group:${groupName}`);
+                const response = await fetch(`${process.env.FGA_API_URL}/stores/${process.env.FGA_STORE_ID}/write`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        writes: { tuple_keys: [tuple] }
+                    })
+                });
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    // Ignore duplicate errors
+                    if (!errorText.includes('duplicate')) {
+                        console.error('❌ Failed to grant access:', errorText);
+                    }
+                    else {
+                        console.log('✅ Tuple already exists (OK)');
+                    }
+                }
+                else {
+                    console.log('✅ Access granted in OpenFGA');
+                }
+            }
+            else {
+                // Remove tuple (revoke access)
+                console.log(`🔐 Revoking ${role} access to ${resourceId} for group:${groupName}`);
+                const response = await fetch(`${process.env.FGA_API_URL}/stores/${process.env.FGA_STORE_ID}/write`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        deletes: { tuple_keys: [tuple] }
+                    })
+                });
+                if (!response.ok) {
+                    console.error('❌ Failed to revoke access:', await response.text());
+                }
+                else {
+                    console.log('✅ Access revoked in OpenFGA');
+                }
+            }
+        }
+        catch (fgaError) {
+            console.error('❌ OpenFGA sync error:', fgaError);
+            // Continue anyway - database is updated
+        }
         return res.json({ success: true, resourceId, role, isVisible });
     }
     catch (error) {
@@ -944,7 +1004,7 @@ app.post('/api/admin/grant-admin', authenticateToken, requireRole(['owner']), as
         await client.query(`
             INSERT INTO admin_grants (user_id, granted_by, action, previous_role, new_role, reason)
             VALUES ($1, $2, 'granted', $3, 'admin', $4)
-        `, [targetUser.id, req.user.id, previousRole, reason]);
+        `, [targetUser.uuid, req.user.uuid, previousRole, reason]);
         await client.query('COMMIT');
         console.log(`✅ Admin access granted to ${targetUser.username} by ${req.user.username}`);
         res.json({
@@ -990,7 +1050,7 @@ app.post('/api/admin/revoke-admin', authenticateToken, requireRole(['owner']), a
         await client.query(`
             INSERT INTO admin_grants (user_id, granted_by, action, previous_role, new_role, reason)
             VALUES ($1, $2, 'revoked', $3, $4, $5)
-        `, [targetUser.id, req.user.id, previousRole, newRole, reason]);
+        `, [targetUser.uuid, req.user.uuid, previousRole, newRole, reason]);
         await client.query('COMMIT');
         console.log(`✅ Admin access revoked from ${targetUser.username} by ${req.user.username}, new role: ${newRole}`);
         res.json({

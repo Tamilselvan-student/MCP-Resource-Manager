@@ -1,0 +1,18 @@
+model
+  schema 1.1
+
+type user
+
+type group
+  relations
+    define member: [user]
+
+type resource
+  relations
+    define owner: [user]
+    define editor: [user, group#member] or owner
+    define viewer: [user, group#member] or editor or owner or admin
+    define admin: [group#member]
+    define can_edit: editor or admin
+    define can_view: viewer or admin
+    define can_delete: owner or admin

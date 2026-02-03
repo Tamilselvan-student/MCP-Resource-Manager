@@ -1,0 +1,89 @@
+name: Model Logic Tests
+
+model_file: ./model.fga
+
+tuples:
+  # Direct Access Setup
+  - user: user:owner1
+    relation: owner
+    object: resource:doc_A
+  
+  - user: user:editor1
+    relation: editor
+    object: resource:doc_A
+
+  - user: user:viewer1
+    relation: viewer
+    object: resource:doc_A
+
+  # Group Access Setup
+  - user: user:member_of_viewers
+    relation: member
+    object: group:viewers
+  
+  - user: group:viewers#member
+    relation: viewer
+    object: resource:doc_B
+
+  - user: user:member_of_editors
+    relation: member
+    object: group:editors
+
+  - user: group:editors#member
+    relation: editor
+    object: resource:doc_C
+
+tests:
+  - name: Owner Permissions (Direct)
+    check:
+      - user: user:owner1
+        object: resource:doc_A
+        assertions:
+          can_view: true
+          can_edit: true
+          can_delete: true
+
+  - name: Editor Permissions (Direct)
+    check:
+      - user: user:editor1
+        object: resource:doc_A
+        assertions:
+          can_view: true
+          can_edit: true
+          can_delete: false
+
+  - name: Viewer Permissions (Direct)
+    check:
+      - user: user:viewer1
+        object: resource:doc_A
+        assertions:
+          can_view: true
+          can_edit: false
+          can_delete: false
+
+  - name: Group Viewer Permissions (via group:viewers)
+    check:
+      - user: user:member_of_viewers
+        object: resource:doc_B
+        assertions:
+          can_view: true
+          can_edit: false
+          can_delete: false
+
+  - name: Group Editor Permissions (via group:editors)
+    check:
+      - user: user:member_of_editors
+        object: resource:doc_C
+        assertions:
+          can_view: true
+          can_edit: true
+          can_delete: false
+
+  - name: Negative Assertions (No Access)
+    check:
+      - user: user:random_stranger
+        object: resource:doc_A
+        assertions:
+          can_view: false
+          can_edit: false
+          can_delete: false

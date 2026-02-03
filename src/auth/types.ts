@@ -4,8 +4,7 @@ import { Request } from 'express';
 // USER INTERFACE (matches database schema)
 // ============================================
 export interface User {
-    id: string;
-    user_id: string;
+    uuid: string;
     username: string;
     email: string;
     password_hash: string;

@@ -1,0 +1,9 @@
+[dotenv@17.2.3] injecting env (11) from .env -- tip: 📡 add observability to secrets: https://dotenvx.com/ops
+[dotenv@17.2.3] injecting env (0) from .env -- tip: ⚙️  specify custom .env file path with { path: '/custom/path/.env' }
+✅ MCP Handler initialized
+   OpenFGA Store: 01KEPX4H744E7RA0WNQDS6DWA7
+   OpenFGA Model: 01KG06W7VVTPPW1D83W2D7EYHP
+✅ Groq AI enabled
+✅ Connected to PostgreSQL database
+✅ Users table ready
+✅ Found 2 users in database

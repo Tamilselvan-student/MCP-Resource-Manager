@@ -1,0 +1,43 @@
+
+import { initDatabase, pool } from '../src/database.ts'; // Import .ts directly for tsx
+
+async function restore() {
+    try {
+        console.log('🔄 Initializing Database (creating tables)...');
+        await initDatabase();
+        console.log('✅ Tables created.');
+
+        console.log('🔄 Restoring Data from Backups...');
+
+        // Restore Users
+        await pool.query(`
+            INSERT INTO users (id, user_id, username, email, password_hash, role, must_change_password, is_active, created_at, updated_at)
+            SELECT id, user_id, username, email, password_hash, role, must_change_password, is_active, created_at, updated_at 
+            FROM users_backup
+            ON CONFLICT (id) DO NOTHING;
+        `);
+        console.log('✅ Users restored.');
+
+        // Restore Resources
+        await pool.query(`
+            INSERT INTO resources (id, resource_type, data, created_by, created_at, visible_to_owner, visible_to_admin, visible_to_editor, visible_to_viewer)
+            SELECT id, resource_type, data, created_by, created_at, visible_to_owner, visible_to_admin, visible_to_editor, visible_to_viewer
+            FROM resources_backup
+            ON CONFLICT (id) DO NOTHING;
+        `);
+        console.log('✅ Resources restored.');
+
+        // Fix sequences
+        await pool.query("SELECT setval('users_id_seq', (SELECT MAX(id) FROM users))");
+        await pool.query("SELECT setval('resources_id_seq', (SELECT MAX(id) FROM resources))");
+        console.log('✅ Sequences reset.');
+
+    } catch (e) {
+        console.error('❌ Restore failed:', e);
+        process.exit(1);
+    } finally {
+        await pool.end();
+    }
+}
+
+restore();

@@ -22,12 +22,12 @@ export interface PendingAction {
 }
 
 // Store pending actions per user
-const pendingActions = new Map<number, PendingAction>();
+const pendingActions = new Map<string, PendingAction>();
 
 /**
  * Store a pending action for a user
  */
-export function setPendingAction(userId: number, action: PendingAction['action'], data: PendingAction['data']): void {
+export function setPendingAction(userId: string, action: PendingAction['action'], data: PendingAction['data']): void {
     pendingActions.set(userId, {
         action,
         data,
@@ -39,7 +39,7 @@ export function setPendingAction(userId: number, action: PendingAction['action']
 /**
  * Get pending action for a user (auto-expires after 5 minutes)
  */
-export function getPendingAction(userId: number): PendingAction | null {
+export function getPendingAction(userId: string): PendingAction | null {
     const pending = pendingActions.get(userId);
 
     if (!pending) {
@@ -60,7 +60,7 @@ export function getPendingAction(userId: number): PendingAction | null {
 /**
  * Clear pending action for a user
  */
-export function clearPendingAction(userId: number): void {
+export function clearPendingAction(userId: string): void {
     const had = pendingActions.has(userId);
     pendingActions.delete(userId);
     if (had) {

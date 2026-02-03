@@ -479,10 +479,9 @@ export async function findUserByIdentifier(identifier: string): Promise<any> {
 
     try {
         const exactResult = await pool.query(`
-      SELECT id, user_id, username, email, role, is_active, created_at
+      SELECT uuid, username, email, role, is_active, created_at
       FROM users
-      WHERE LOWER(user_id) = $1 
-         OR LOWER(username) = $1 
+      WHERE LOWER(username) = $1 
          OR LOWER(email) = $1
       LIMIT 1
     `, [normalized]);
@@ -492,7 +491,7 @@ export async function findUserByIdentifier(identifier: string): Promise<any> {
         }
 
         const partialResult = await pool.query(`
-      SELECT id, user_id, username, email, role, is_active, created_at
+      SELECT uuid, username, email, role, is_active, created_at
       FROM users
       WHERE LOWER(username) LIKE $1 
          OR LOWER(email) LIKE $1
@@ -515,7 +514,7 @@ export async function findResourceByName(name: string): Promise<any> {
 
     try {
         const result = await pool.query(`
-      SELECT id, resource_type, data, 
+      SELECT uuid, resource_type, data, 
              visible_to_owner, visible_to_admin, 
              visible_to_editor, visible_to_viewer,
              created_by, created_at

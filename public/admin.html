@@ -530,21 +530,21 @@
 
                 if (result.success && result.data.length > 0) {
                     listEl.innerHTML = result.data.map(user => {
-                        const isProtected = protectedUsers.includes(user.user_id);
+                        const isProtected = protectedUsers.includes(user.uuid);
                         const deleteBtn = isProtected
                             ? `<button class="delete-btn" disabled>PROTECTED</button>`
-                            : `<button class="delete-btn" onclick="deleteUser('${user.user_id}', '${user.username}')">DELETE</button>`;
+                            : `<button class="delete-btn" onclick="deleteUser('${user.uuid}', '${user.username}')">DELETE</button>`;
 
                         const roleOptions = ['viewer', 'editor', 'admin'].map(role =>
                             `<option value="${role}" ${user.role === role ? 'selected' : ''}>${role.toUpperCase()}</option>`
                         ).join('');
 
-                        const roleSelect = `<select class="role-select" onchange="changeUserRole('${user.user_id}', this.value)" ${isProtected ? 'disabled' : ''}>${roleOptions}</select>`;
+                        const roleSelect = `<select class="role-select" onchange="changeUserRole('${user.uuid}', this.value)" ${isProtected ? 'disabled' : ''}>${roleOptions}</select>`;
 
                         return `
                             <div class="user-item">
                                 <div class="user-info">
-                                    > ${user.user_id}
+                                    ${user.username} <span class="user-role">(${user.email})</span>
                                 </div>
                                 ${roleSelect}
                                 ${deleteBtn}
@@ -579,7 +579,7 @@
                 const usersData = await usersResponse.json();
 
                 const tbody = document.getElementById('adminManagementTableBody');
-                tbody.innerHTML = usersData.users
+                tbody.innerHTML = usersData.data
                     .filter(u => u.role !== 'owner') // Can't modify owner
                     .map(user => `
                         <tr style="border-bottom: 1px solid #2563eb;">
@@ -594,11 +594,11 @@
                             </td>
                             <td style="padding: 12px;">
                                 ${user.role === 'admin'
-                            ? `<button onclick="revokeAdmin('${user.user_id}', '${user.username}')" 
+                            ? `<button onclick="revokeAdmin('${user.uuid}', '${user.username}')" 
                                          style="background: #dc2626; color: white; border: none; padding: 8px 16px; cursor: pointer; border-radius: 4px; font-size: 11px; font-family: 'Press Start 2P', monospace;">
                                          REVOKE ADMIN
                                        </button>`
-                            : `<button onclick="grantAdmin('${user.user_id}', '${user.username}')" 
+                            : `<button onclick="grantAdmin('${user.uuid}', '${user.username}')" 
                                          style="background: #16a34a; color: white; border: none; padding: 8px 16px; cursor: pointer; border-radius: 4px; font-size: 11px; font-family: 'Press Start 2P', monospace;">
                                          GRANT ADMIN
                                        </button>`

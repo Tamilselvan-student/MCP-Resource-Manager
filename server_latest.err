@@ -1,0 +1,46 @@
+Error creating resource: error: column "resource_type" of relation "resources" does not exist
+    at D:\MCP-OpenFGA\MCP-Resource-Manager\node_modules\pg-pool\index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async executeCreateResource (file:///D:/MCP-OpenFGA/MCP-Resource-Manager/dist/chat/command-executor.js:887:24)
+    at async file:///D:/MCP-OpenFGA/MCP-Resource-Manager/dist/chat/routes.js:135:24 {
+  length: 135,
+  severity: 'ERROR',
+  code: '42703',
+  detail: undefined,
+  hint: undefined,
+  position: '54',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_target.c',
+  line: '1075',
+  routine: 'checkInsertTargets'
+}
+Error creating resource: error: column "resource_type" of relation "resources" does not exist
+    at D:\MCP-OpenFGA\MCP-Resource-Manager\node_modules\pg-pool\index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async executeCreateResource (file:///D:/MCP-OpenFGA/MCP-Resource-Manager/dist/chat/command-executor.js:887:24)
+    at async file:///D:/MCP-OpenFGA/MCP-Resource-Manager/dist/chat/routes.js:135:24 {
+  length: 135,
+  severity: 'ERROR',
+  code: '42703',
+  detail: undefined,
+  hint: undefined,
+  position: '54',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_target.c',
+  line: '1075',
+  routine: 'checkInsertTargets'
+}

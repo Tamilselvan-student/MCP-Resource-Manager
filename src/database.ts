@@ -86,7 +86,7 @@ export async function seedUsers() {
 export async function getUsers() {
     try {
         const result = await pool.query(`
-            SELECT user_id, username, role, created_at
+            SELECT uuid, username, role, created_at
             FROM users
             ORDER BY created_at ASC;
         `);
@@ -106,7 +106,7 @@ export async function getUserRole(userId: string): Promise<string | null> {
         const result = await pool.query(`
             SELECT role
             FROM users
-            WHERE user_id = $1;
+            WHERE uuid = $1;
         `, [userId]);
 
         if (result.rows.length === 0) {
@@ -124,17 +124,17 @@ export async function getUserRole(userId: string): Promise<string | null> {
 // ADD USER
 // ============================================
 
-export async function addUser(userId: string, username: string, email: string, name: string, role: string) {
+export async function addUser(username: string, email: string, role: string) {
     try {
         // Hash default password
         const defaultPassword = 'changeme123';
         const hashedPassword = await bcrypt.hash(defaultPassword, 10);
 
         const result = await pool.query(`
-            INSERT INTO users (user_id, username, email, password_hash, role, must_change_password, is_active)
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            INSERT INTO users (username, email, password_hash, role, must_change_password, is_active, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
             RETURNING *;
-        `, [userId, username, email, hashedPassword, role, true, true]);  // Changed to true
+        `, [username, email, hashedPassword, role, true, true]);
 
         console.log(`✅ Created user in database: ${username} (${email}) with role ${role} - must change password`);
         return result.rows[0];
@@ -161,7 +161,7 @@ export async function deleteUser(userId: string) {
 
         const result = await pool.query(`
             DELETE FROM users
-            WHERE user_id = $1
+            WHERE uuid = $1
             RETURNING *;
         `, [userId]);
 
@@ -185,8 +185,7 @@ export async function getUserByEmail(email: string) {
     try {
         const result = await pool.query(`
             SELECT 
-                id,
-                user_id,
+                uuid,
                 username,
                 email,
                 password_hash,

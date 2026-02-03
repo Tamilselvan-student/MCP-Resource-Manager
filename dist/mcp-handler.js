@@ -359,7 +359,13 @@ export class MCPHandler {
         console.log(`🔐 Batch checking ${checks.length} permissions...`);
         // Since the JS SDK might not have a dedicated batch check covering distinct resources widely,
         // we use Promise.all to execute them in parallel.
-        const promises = checks.map(check => this.checkPermission(check.userId, check.object, check.relation));
+        const promises = checks.map(check => {
+            // Ensure userId is properly formatted as 'user:UUID'
+            const formattedUserId = check.userId.startsWith('user:')
+                ? check.userId
+                : `user:${check.userId}`;
+            return this.checkPermission(formattedUserId, check.object, check.relation);
+        });
         return Promise.all(promises);
     }
     // ============================================
