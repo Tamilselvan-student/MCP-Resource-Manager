@@ -1,8 +1,11 @@
 import fetch from 'node-fetch';
 import fs from 'fs';
+import dotenv from 'dotenv';
 
-const STORE_ID = '01KEPX4H744E7RA0WNQDS6DWA7';
-const API_URL = 'http://localhost:8080';
+dotenv.config();
+
+const STORE_ID = process.env.FGA_STORE_ID;
+const API_URL = process.env.FGA_API_URL || 'http://localhost:8080';
 
 async function uploadModel() {
     console.log('=== UPLOADING NEW OPENFGA MODEL ===\n');
@@ -11,9 +14,9 @@ async function uploadModel() {
         // Read the new model
         const modelContent = fs.readFileSync('model-with-admin-bypass.fga', 'utf8');
 
-        console.log('Model content:');
-        console.log(modelContent);
-        console.log('\n');
+        // console.log('Model content:');
+        // console.log(modelContent);
+        // console.log('\n');
 
         // Upload to OpenFGA
         const response = await fetch(`${API_URL}/stores/${STORE_ID}/authorization-models`, {
@@ -26,8 +29,9 @@ async function uploadModel() {
         });
 
         if (!response.ok) {
-            const error = await response.text();
-            console.error('❌ Failed to upload model:', error);
+            const errorText = await response.text();
+            fs.writeFileSync('error.json', errorText);
+            console.error(`❌ Failed to upload model. See error.json`);
             return;
         }
 
