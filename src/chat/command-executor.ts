@@ -372,10 +372,40 @@ ${formatRoleList()}`,
                 // Create user
                 const passwordHash = await bcrypt.hash('changeme123', 10);
 
-                await pool.query(`
+                const userResult = await pool.query(`
                     INSERT INTO users (username, email, password_hash, role, must_change_password, is_active, created_at, updated_at)
                     VALUES ($1, $2, $3, $4, TRUE, TRUE, NOW(), NOW())
+                    RETURNING uuid
                 `, [username, userData.email, passwordHash, userData.role]);
+
+                const newUserUuid = userResult.rows[0].uuid;
+
+                // Add to OpenFGA group for viewers and editors
+                if (userData.role === 'editor' || userData.role === 'viewer') {
+                    try {
+                        const groupResponse = await fetch(`${process.env.FGA_API_URL}/stores/${process.env.FGA_STORE_ID}/write`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                writes: {
+                                    tuple_keys: [{
+                                        user: `user:${newUserUuid}`,
+                                        relation: 'member',
+                                        object: `group:${userData.role}s`
+                                    }]
+                                }
+                            })
+                        });
+
+                        if (!groupResponse.ok) {
+                            console.error('⚠️  Failed to add user to group:', await groupResponse.text());
+                        } else {
+                            console.log(`✅ Added ${username} to group:${userData.role}s`);
+                        }
+                    } catch (error: any) {
+                        console.error('⚠️  OpenFGA group membership error:', error.message);
+                    }
+                }
 
                 clearPendingAction(executorId as any);
 
@@ -435,10 +465,40 @@ ${formatRoleList()}`,
             // Create user
             const passwordHash = await bcrypt.hash('changeme123', 10);
 
-            await pool.query(`
+            const userResult = await pool.query(`
                 INSERT INTO users (username, email, password_hash, role, must_change_password, is_active, created_at, updated_at)
                 VALUES ($1, $2, $3, $4, TRUE, TRUE, NOW(), NOW())
+                RETURNING uuid
             `, [username, email, passwordHash, role]);
+
+            const newUserUuid = userResult.rows[0].uuid;
+
+            // Add to OpenFGA group for viewers and editors
+            if (role === 'editor' || role === 'viewer') {
+                try {
+                    const groupResponse = await fetch(`${process.env.FGA_API_URL}/stores/${process.env.FGA_STORE_ID}/write`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            writes: {
+                                tuple_keys: [{
+                                    user: `user:${newUserUuid}`,
+                                    relation: 'member',
+                                    object: `group:${role}s`
+                                }]
+                            }
+                        })
+                    });
+
+                    if (!groupResponse.ok) {
+                        console.error('⚠️  Failed to add user to group:', await groupResponse.text());
+                    } else {
+                        console.log(`✅ Added ${username} to group:${role}s`);
+                    }
+                } catch (error: any) {
+                    console.error('⚠️  OpenFGA group membership error:', error.message);
+                }
+            }
 
             const roleEmoji = { owner: '🟣', admin: '🔴', editor: '🔵', viewer: '⚪' }[role] || '⚪';
 

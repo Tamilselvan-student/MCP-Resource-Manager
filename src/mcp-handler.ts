@@ -160,6 +160,26 @@ export class MCPHandler {
             const result: QueryResult = await this.dbPool.query(query, params);
             console.log(`✅ Found ${result.rows.length} ${resourceType}(s) in database`);
 
+            // Get user's role to determine which permission to check
+            let userRole = 'viewer'; // default
+            try {
+                const roleResult = await this.dbPool.query(
+                    'SELECT role FROM users WHERE uuid = $1',
+                    [userId.replace('user:', '')]
+                );
+                if (roleResult.rows.length > 0) {
+                    userRole = roleResult.rows[0].role;
+                }
+            } catch (error) {
+                console.warn('⚠️  Could not fetch user role, defaulting to viewer');
+            }
+
+            // Determine which relation to check based on role
+            // Editors check for 'editor' permission, viewers check for 'viewer' permission
+            // Admins and owners will have access through can_list check above
+            const relationToCheck = (userRole === 'editor') ? 'editor' : 'viewer';
+            console.log(`📋 Checking ${relationToCheck} permission for role: ${userRole}`);
+
             // Filter by permission - check each resource individually
             const accessibleResources = [];
             for (const resource of result.rows) {
@@ -167,7 +187,7 @@ export class MCPHandler {
                     userId,
                     resourceType,
                     resource.id,
-                    'viewer'
+                    relationToCheck
                 );
                 if (hasAccess) {
                     accessibleResources.push(resource);

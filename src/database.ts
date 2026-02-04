@@ -1,5 +1,5 @@
-import pkg from 'pg';
-const { Pool } = pkg;
+import pg from 'pg';
+const { Pool } = pg;
 import dotenv from 'dotenv';
 import bcrypt from 'bcryptjs';
 

@@ -512,7 +512,7 @@ app.post('/api/admin/users', async (req: Request, res: Response) => {
 
     try {
         // Add to database with email
-        await addUser(username, email, role);
+        const newUser = await addUser(username, email, role);
 
         // Map role to OpenFGA relation
         const roleToRelation: { [key: string]: string } = {
@@ -537,17 +537,17 @@ app.post('/api/admin/users', async (req: Request, res: Response) => {
         // ==========================================
         if (role === 'viewer' || role === 'editor') {
             const groupName = `${role}s`; // viewers or editors
-            const groupUser = `user:${userId}`; // Ensure format
+            const userFgaId = `user:${newUser.uuid}`; // Use database UUID, not client userId
 
             try {
-                console.log(`✨ Adding ${groupUser} to group:${groupName}...`);
+                console.log(`✨ Adding ${userFgaId} to group:${groupName}...`);
                 const fgaRes = await fetch(`${process.env.FGA_API_URL}/stores/${process.env.FGA_STORE_ID}/write`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         writes: {
                             tuple_keys: [{
-                                user: groupUser,
+                                user: userFgaId,
                                 relation: 'member',
                                 object: `group:${groupName}`
                             }]
@@ -852,7 +852,7 @@ app.post('/api/resources', authenticateToken, async (req: AuthRequest, res: Resp
                 body: JSON.stringify({
                     writes: {
                         tuple_keys: [{
-                            user: userId,
+                            user: `user:${userId}`,
                             relation: 'owner',
                             object: documentId
                         }]
@@ -958,6 +958,7 @@ app.get('/api/resources', authenticateToken, async (req: AuthRequest, res: Respo
         const result = await pool.query(query, params);
 
         // 2. Filter using OpenFGA checks in parallel
+        // Using Independent OpenFGA Model (no hierarchy)
 
         const resourcesToCheck = result.rows;
         let authorizedResources: any[] = [];
@@ -967,15 +968,24 @@ app.get('/api/resources', authenticateToken, async (req: AuthRequest, res: Respo
             authorizedResources = resourcesToCheck;
         } else {
             // Batch check with OpenFGA
+            // Determine which relation to check based on user role (Independent relations)
+            const relationToCheck = (userRole === 'editor') ? 'editor' : 'viewer';
+
             const checkRequests = resourcesToCheck.map(r => ({
                 userId: req.user!.uuid,
-                relation: 'viewer',
+                relation: relationToCheck,
                 object: `resource:${r.uuid}`
             }));
 
             // Execute batch check
-            const results = await mcpHandler.batchCheck(checkRequests);
-            authorizedResources = resourcesToCheck.filter((_, index) => results[index]);
+            try {
+                const results = await mcpHandler.batchCheck(checkRequests);
+                authorizedResources = resourcesToCheck.filter((_, index) => results[index]);
+            } catch (err) {
+                console.error('OpenFGA Batch Check Error:', err);
+                // Fail safe: return empty if check fails
+                authorizedResources = [];
+            }
         }
 
         // Get only Admins/Owners for wildcard display
