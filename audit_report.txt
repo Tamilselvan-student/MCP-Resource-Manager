@@ -1,7 +1,0 @@
---- AUDIT REPORT ---
-Database Users: 5
-Database Resources: 5
-
---- MISSING GROUP MEMBERSHIPS ---
-
---- MISSING RESOURCE OWNERS ---

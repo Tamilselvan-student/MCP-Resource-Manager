@@ -1,4 +1,0 @@
-{
-  "status": "created",
-  "uuid": "7494cbc5-3af0-48de-8185-f4e8a3b920c3"
-}
